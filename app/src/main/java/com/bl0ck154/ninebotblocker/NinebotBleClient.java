@@ -25,8 +25,9 @@ public final class NinebotBleClient {
     public interface Listener {
         void onStatus(String status);
         void onReady();
+        void onLockState(boolean locked);
+        void onActionResult(boolean success, Boolean locked, String message);
         void onDisconnected(String reason);
-        void onLockResult(boolean success, String message);
     }
 
     private static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
@@ -44,27 +45,33 @@ public final class NinebotBleClient {
     private BluetoothGattCharacteristic rx;
     private NinebotCrypto crypto;
     private byte[] serial;
+
     private boolean cancelled;
     private boolean ready;
     private boolean writeInFlight;
-    private boolean pendingLock;
     private boolean initAccepted;
     private boolean pingAccepted;
     private boolean pairAccepted;
     private boolean firstPairTriggerSent;
     private boolean pairingPromptShown;
-    private boolean lockInFlight;
+
+    private Boolean lockState;
+    private boolean stateReadInFlight;
+    private Boolean pendingDesiredLock;
+    private boolean pendingToggle;
+    private Boolean requestedLocked;
+    private int verifyAttempts;
 
     private final Runnable connectionTimeout = () -> {
         if (!cancelled && !ready) {
-            failConnection("SHU authentication timed out. Keep the scooter on; if pairing is requested, press POWER once.");
+            failConnection("Connection timed out. Keep the scooter on and try again.");
         }
     };
 
     private final Runnable initRetry = new Runnable() {
         @Override public void run() {
             if (cancelled || ready || initAccepted || rx == null) return;
-            status("SHU auth: 5B…");
+            status("Connecting…");
             sendEncrypted(ShuNinebotProtocol.initPacket());
             main.postDelayed(this, 900);
         }
@@ -74,8 +81,8 @@ public final class NinebotBleClient {
         @Override public void run() {
             if (cancelled || ready || pingAccepted || !initAccepted || rx == null) return;
             status(pairingPromptShown
-                    ? "Pairing: press scooter POWER once if needed…"
-                    : "SHU auth: 5C…");
+                    ? "Press the scooter POWER button once to pair."
+                    : "Authenticating…");
             sendEncrypted(ShuNinebotProtocol.pingPacket());
 
             if (!firstPairTriggerSent && serial != null) {
@@ -95,16 +102,40 @@ public final class NinebotBleClient {
     private final Runnable pairRetry = new Runnable() {
         @Override public void run() {
             if (cancelled || ready || pairAccepted || !pingAccepted || serial == null || rx == null) return;
-            status("SHU auth: 5D…");
+            status("Authenticating…");
             sendEncrypted(ShuNinebotProtocol.pairPacket(serial));
             main.postDelayed(this, 500);
         }
     };
 
-    private final Runnable lockComplete = () -> {
-        if (!cancelled && lockInFlight) {
-            lockInFlight = false;
-            listener.onLockResult(true, "LOCK command sent through authenticated SHU NinebotCrypto.");
+    private final Runnable stateReadTimeout = () -> {
+        if (cancelled || !stateReadInFlight) return;
+        stateReadInFlight = false;
+        if (pendingToggle) {
+            pendingToggle = false;
+            listener.onActionResult(false, lockState, "Couldn't read the scooter lock state.");
+        } else if (pendingDesiredLock != null) {
+            Boolean desired = pendingDesiredLock;
+            pendingDesiredLock = null;
+            sendSetLocked(desired);
+        } else {
+            status("Connected, but lock status is unavailable.");
+        }
+    };
+
+    private final Runnable actionTimeout = () -> {
+        if (cancelled || requestedLocked == null) return;
+        Boolean expected = requestedLocked;
+        requestedLocked = null;
+        listener.onActionResult(false, lockState,
+                expected ? "Lock command was sent, but the final state could not be verified."
+                        : "Unlock command was sent, but the final state could not be verified.");
+    };
+
+    private final Runnable verifyAction = new Runnable() {
+        @Override public void run() {
+            if (cancelled || requestedLocked == null || !isReady()) return;
+            requestLockState();
         }
     };
 
@@ -117,20 +148,28 @@ public final class NinebotBleClient {
         return ready && gatt != null && rx != null;
     }
 
+    public Boolean getLockState() {
+        return lockState;
+    }
+
     @SuppressLint("MissingPermission")
     public void connect(BluetoothDevice device, String preferredName) {
         closeInternal(false);
         cancelled = false;
         ready = false;
         writeInFlight = false;
-        pendingLock = false;
         initAccepted = false;
         pingAccepted = false;
         pairAccepted = false;
         firstPairTriggerSent = false;
         pairingPromptShown = false;
-        lockInFlight = false;
         serial = null;
+        lockState = null;
+        stateReadInFlight = false;
+        pendingDesiredLock = null;
+        pendingToggle = false;
+        requestedLocked = null;
+        verifyAttempts = 0;
         writeQueue.clear();
         receiveBuffer.reset();
 
@@ -139,24 +178,42 @@ public final class NinebotBleClient {
         if (name == null || name.isBlank()) name = "NBScooter2020";
         crypto = new NinebotCrypto(name);
 
-        status("Connecting to " + name + "…");
+        status("Connecting…");
         main.removeCallbacks(connectionTimeout);
         main.postDelayed(connectionTimeout, 25000);
         try {
             gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
         } catch (Exception e) {
-            failConnection("Bluetooth connection failed: " + e.getMessage());
+            failConnection("Bluetooth connection failed.");
         }
     }
 
-    public void lockWhenReady() {
+    /** Set a desired state as soon as the authenticated connection is ready. */
+    public void setLockedWhenReady(boolean locked) {
         if (cancelled) return;
+        pendingToggle = false;
+        pendingDesiredLock = locked;
         if (!isReady()) {
-            pendingLock = true;
-            status("LOCK queued — connecting/authenticating…");
+            status("Connecting…");
             return;
         }
-        sendLock();
+        resolvePendingAction();
+    }
+
+    /** Read the real state and switch it to the opposite value. Used by the home shortcut. */
+    public void toggleWhenReady() {
+        if (cancelled) return;
+        pendingDesiredLock = null;
+        pendingToggle = true;
+        if (!isReady()) {
+            status("Connecting…");
+            return;
+        }
+        requestLockState();
+    }
+
+    public void refreshLockState() {
+        if (isReady()) requestLockState();
     }
 
     @SuppressLint("MissingPermission")
@@ -173,16 +230,20 @@ public final class NinebotBleClient {
     private void closeInternal(boolean notify) {
         cancelled = true;
         ready = false;
-        pendingLock = false;
         writeInFlight = false;
-        lockInFlight = false;
+        stateReadInFlight = false;
+        pendingDesiredLock = null;
+        pendingToggle = false;
+        requestedLocked = null;
         writeQueue.clear();
         receiveBuffer.reset();
         main.removeCallbacks(connectionTimeout);
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
-        main.removeCallbacks(lockComplete);
+        main.removeCallbacks(stateReadTimeout);
+        main.removeCallbacks(actionTimeout);
+        main.removeCallbacks(verifyAction);
 
         BluetoothGatt old = gatt;
         gatt = null;
@@ -200,11 +261,11 @@ public final class NinebotBleClient {
         public void onConnectionStateChange(BluetoothGatt g, int statusCode, int newState) {
             if (cancelled || g != gatt) return;
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                status("Connected. Opening Ninebot UART…");
+                status("Connecting…");
                 try { g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH); } catch (Exception ignored) {}
-                if (!g.discoverServices()) failConnection("Could not discover scooter BLE services.");
+                if (!g.discoverServices()) failConnection("Could not open scooter Bluetooth services.");
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                failConnection("Scooter disconnected (GATT " + statusCode + ").");
+                failConnection("Scooter disconnected.");
             }
         }
 
@@ -213,31 +274,30 @@ public final class NinebotBleClient {
         public void onServicesDiscovered(BluetoothGatt g, int statusCode) {
             if (cancelled || g != gatt) return;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("BLE service discovery failed (GATT " + statusCode + ").");
+                failConnection("Could not open scooter Bluetooth services.");
                 return;
             }
 
             BluetoothGattService service = g.getService(UART_SERVICE);
             if (service == null) {
-                failConnection("Ninebot Nordic UART service not found.");
+                failConnection("This scooter does not expose the expected Ninebot service.");
                 return;
             }
             rx = service.getCharacteristic(UART_RX);
             BluetoothGattCharacteristic tx = service.getCharacteristic(UART_TX);
             if (rx == null || tx == null) {
-                failConnection("Ninebot UART characteristics not found.");
+                failConnection("Ninebot Bluetooth channel is unavailable.");
                 return;
             }
 
             BluetoothGattDescriptor cccd = tx.getDescriptor(CCCD);
             if (cccd == null || !g.setCharacteristicNotification(tx, true)) {
-                failConnection("Could not enable Ninebot notifications.");
+                failConnection("Could not enable scooter responses.");
                 return;
             }
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            status("UART ready. Starting SHU NinebotCrypto…");
             if (!g.writeDescriptor(cccd)) {
-                failConnection("Could not subscribe to scooter responses.");
+                failConnection("Could not enable scooter responses.");
             }
         }
 
@@ -245,7 +305,7 @@ public final class NinebotBleClient {
         public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int statusCode) {
             if (cancelled || g != gatt) return;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("Notification setup failed (GATT " + statusCode + ").");
+                failConnection("Bluetooth setup failed.");
                 return;
             }
             main.removeCallbacks(initRetry);
@@ -270,7 +330,7 @@ public final class NinebotBleClient {
             if (cancelled || g != gatt) return;
             writeInFlight = false;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("Bluetooth write failed (GATT " + statusCode + ").");
+                failConnection("Bluetooth write failed.");
                 return;
             }
             writeNextChunk();
@@ -303,7 +363,7 @@ public final class NinebotBleClient {
                 if (remainder.length == 0) return;
             }
         } catch (Exception e) {
-            failConnection("NinebotCrypto receive error: " + e.getMessage());
+            failConnection("Scooter response could not be decoded.");
         }
     }
 
@@ -317,7 +377,6 @@ public final class NinebotBleClient {
             if (!initAccepted) {
                 initAccepted = true;
                 main.removeCallbacks(initRetry);
-                status("SHU auth: 5B accepted. Sending 5C…");
                 main.removeCallbacks(pingRetry);
                 main.post(pingRetry);
             }
@@ -329,13 +388,12 @@ public final class NinebotBleClient {
                 if (!pingAccepted) {
                     pingAccepted = true;
                     main.removeCallbacks(pingRetry);
-                    status("SHU key accepted. Finishing pairing…");
                     main.removeCallbacks(pairRetry);
                     main.post(pairRetry);
                 }
             } else if (index == 0) {
                 pairingPromptShown = true;
-                status("Pairing needed — press scooter POWER once.");
+                status("Press the scooter POWER button once to pair.");
             }
             return;
         }
@@ -347,11 +405,30 @@ public final class NinebotBleClient {
             return;
         }
 
-        if (lockInFlight && index == ShuNinebotProtocol.REG_LOCK
-                && (command == 0x02 || command == 0x05 || command == 0x32)) {
-            main.removeCallbacks(lockComplete);
-            lockInFlight = false;
-            listener.onLockResult(true, "LOCKED — scooter acknowledged register 0x70.");
+        Boolean reportedState = ShuNinebotProtocol.lockStateFromResponse(packet);
+        if (reportedState != null) {
+            stateReadInFlight = false;
+            main.removeCallbacks(stateReadTimeout);
+            lockState = reportedState;
+            listener.onLockState(reportedState);
+
+            if (requestedLocked != null) {
+                if (requestedLocked.equals(reportedState)) {
+                    Boolean completed = requestedLocked;
+                    requestedLocked = null;
+                    main.removeCallbacks(actionTimeout);
+                    main.removeCallbacks(verifyAction);
+                    status(completed ? "Locked" : "Unlocked");
+                    listener.onActionResult(true, completed, completed ? "Scooter locked." : "Scooter unlocked.");
+                } else if (verifyAttempts < 4) {
+                    verifyAttempts++;
+                    main.removeCallbacks(verifyAction);
+                    main.postDelayed(verifyAction, 350);
+                }
+                return;
+            }
+
+            resolvePendingAction();
         }
     }
 
@@ -362,21 +439,62 @@ public final class NinebotBleClient {
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
-        status("Connected + SHU authenticated. Ready to lock.");
+        status("Checking lock status…");
         listener.onReady();
-        if (pendingLock) {
-            pendingLock = false;
-            sendLock();
+        requestLockState();
+    }
+
+    private void resolvePendingAction() {
+        if (!isReady()) return;
+        if (pendingToggle) {
+            if (lockState == null) {
+                requestLockState();
+                return;
+            }
+            boolean desired = !lockState;
+            pendingToggle = false;
+            sendSetLocked(desired);
+            return;
+        }
+
+        if (pendingDesiredLock != null) {
+            if (lockState == null) {
+                requestLockState();
+                return;
+            }
+            boolean desired = pendingDesiredLock;
+            pendingDesiredLock = null;
+            if (lockState == desired) {
+                status(desired ? "Locked" : "Unlocked");
+                listener.onActionResult(true, desired,
+                        desired ? "Scooter is already locked." : "Scooter is already unlocked.");
+            } else {
+                sendSetLocked(desired);
+            }
         }
     }
 
-    private void sendLock() {
-        if (!isReady() || lockInFlight) return;
-        lockInFlight = true;
-        status("Sending SHU LOCK (3E 20 02 70 01)…");
-        sendEncrypted(ShuNinebotProtocol.lockPacket());
-        main.removeCallbacks(lockComplete);
-        main.postDelayed(lockComplete, 700);
+    private void requestLockState() {
+        if (!isReady() || stateReadInFlight) return;
+        stateReadInFlight = true;
+        sendEncrypted(ShuNinebotProtocol.readLockStatePacket());
+        main.removeCallbacks(stateReadTimeout);
+        main.postDelayed(stateReadTimeout, 1200);
+    }
+
+    private void sendSetLocked(boolean locked) {
+        if (!isReady()) {
+            pendingDesiredLock = locked;
+            return;
+        }
+        requestedLocked = locked;
+        verifyAttempts = 0;
+        status(locked ? "Locking…" : "Unlocking…");
+        sendEncrypted(locked ? ShuNinebotProtocol.lockPacket() : ShuNinebotProtocol.unlockPacket());
+        main.removeCallbacks(actionTimeout);
+        main.postDelayed(actionTimeout, 3200);
+        main.removeCallbacks(verifyAction);
+        main.postDelayed(verifyAction, 500);
     }
 
     private void sendEncrypted(byte[] plainPacket) {
@@ -406,7 +524,7 @@ public final class NinebotBleClient {
         }
         if (!accepted) {
             writeInFlight = false;
-            failConnection("Android rejected the BLE write.");
+            failConnection("Android rejected the Bluetooth write.");
         }
     }
 
