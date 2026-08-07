@@ -6,17 +6,32 @@ import org.junit.Test;
 
 public final class ShuNinebotProtocolTest {
     @Test
-    public void buildsExactShu27ClassicLockCommand() {
+    public void buildsExactShu27InitPacket() {
         assertArrayEquals(
-                hex("3E20327001"),
-                ShuNinebotProtocol.lockCommand());
+                hex("5AA5003E215B00"),
+                ShuNinebotProtocol.initPacket());
     }
 
     @Test
-    public void buildsExactShu27ClassicLockFrame() {
+    public void buildsExactShu27FixedKeyPingPacket() {
         assertArrayEquals(
-                hex("5AA5013E20327001FDFE"),
-                ShuNinebotProtocol.plainLockFrame());
+                hex("5AA5103E215C004AEEBD73E2161C112D065A49CC6E8BB7"),
+                ShuNinebotProtocol.pingPacket());
+    }
+
+    @Test
+    public void buildsExactShu27PairPacket() {
+        byte[] serial = hex("3031323334353637383941424344");
+        assertArrayEquals(
+                hex("5AA50E3E215D003031323334353637383941424344"),
+                ShuNinebotProtocol.pairPacket(serial));
+    }
+
+    @Test
+    public void buildsExactShu27CryptoLockPlaintext() {
+        assertArrayEquals(
+                hex("5AA5013E20027001"),
+                ShuNinebotProtocol.lockPacket());
     }
 
     private static byte[] hex(String value) {
