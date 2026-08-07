@@ -11,8 +11,8 @@ import javax.crypto.spec.SecretKeySpec;
 /**
  * Minimal Java implementation of the NinebotCrypto transport used by newer dashboards.
  *
- * Protocol behaviour was implemented from the public ScooterHacking NinebotCrypto / miauth
- * interoperability documentation. This class is intentionally limited to transport encryption.
+ * The counter/state behaviour follows the public ScooterHacking NinebotCrypto protocol.
+ * This class is intentionally limited to transport encryption used by this app.
  */
 public final class NinebotCrypto {
     private static final byte[] FW_DATA = hex("97CFB802844143DE56002B3B34780A5D");
@@ -64,7 +64,7 @@ public final class NinebotCrypto {
         byte[] result = new byte[plainPacket.length + 6];
         System.arraycopy(plainPacket, 0, result, 0, 3);
 
-        if (counter == 0 || bleData == null) {
+        if (counter == 0) {
             byte[] encrypted = cryptoFirst(payload);
             System.arraycopy(encrypted, 0, result, 3, encrypted.length);
             int p = 3 + encrypted.length;
@@ -75,8 +75,11 @@ public final class NinebotCrypto {
             result[p + 3] = crc[1];
             result[p + 4] = 0;
             result[p + 5] = 0;
+
+            // Critical Ninebot state transition: INIT consumes counter 0.
+            counter = 1;
         } else {
-            counter = (counter + 1) & 0xFFFF;
+            counter = (counter + 1) & 0xFFFFFFFF;
             if (counter == 0) counter = 1;
 
             byte[] encrypted = cryptoNext(payload, counter);
@@ -96,18 +99,26 @@ public final class NinebotCrypto {
         }
 
         int payloadLength = encryptedPacket.length - 9;
-        if (payloadLength < 0) throw new IllegalArgumentException("Invalid encrypted packet");
         byte[] encryptedPayload = Arrays.copyOfRange(encryptedPacket, 3, 3 + payloadLength);
 
-        int responseCounter = ((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
+        int low16 = ((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
                 | (encryptedPacket[encryptedPacket.length - 1] & 0xFF);
-        counter = responseCounter;
+        int responseCounter = (counter & 0xFFFF0000) | low16;
 
         byte[] decrypted;
-        if (counter == 0 || bleData == null) {
+        if (responseCounter == 0) {
+            // The INIT reply uses the first-message cipher, but it must NOT reset the
+            // local TX counter that already advanced to 1 after sending INIT.
             decrypted = cryptoFirst(encryptedPayload);
         } else {
-            decrypted = cryptoNext(encryptedPayload, counter);
+            decrypted = cryptoNext(encryptedPayload, responseCounter);
+
+            // Match NinebotCrypto's counter resynchronisation behaviour.
+            if (Integer.compareUnsigned(counter, responseCounter) > 0) {
+                counter = responseCounter;
+            } else {
+                counter = counter + 1;
+            }
         }
 
         byte[] result = new byte[3 + decrypted.length];
@@ -185,9 +196,9 @@ public final class NinebotCrypto {
     }
 
     private static byte[] crcFirst(byte[] data) {
-        int sum = 0;
-        for (byte b : data) sum = (sum + (b & 0xFF)) & 0xFFFF;
-        int crc = (~sum) & 0xFFFF;
+        long sum = 0;
+        for (byte b : data) sum += b;
+        long crc = ~sum;
         return new byte[]{(byte) (crc & 0xFF), (byte) ((crc >>> 8) & 0xFF)};
     }
 
