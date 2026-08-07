@@ -31,20 +31,36 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 
-/** Lightweight G30 dashboard. Bluetooth transport is owned by ScooterRepository. */
+/** Compact daily-use G30 dashboard. Bluetooth transport is owned by ScooterRepository. */
 public final class MainActivity extends Activity implements ScooterRepository.Listener {
     private static final int REQ_BLE = 42;
     private static final int REQ_NOTIFICATIONS = 43;
 
+    private static final int BG = Color.rgb(245, 247, 250);
+    private static final int CARD = Color.WHITE;
+    private static final int TEXT = Color.rgb(17, 24, 39);
+    private static final int MUTED = Color.rgb(102, 112, 133);
+    private static final int BORDER = Color.rgb(226, 232, 240);
+    private static final int ACCENT = Color.rgb(0, 126, 121);
+    private static final int ACCENT_SOFT = Color.rgb(229, 247, 245);
+    private static final int WARNING_SOFT = Color.rgb(255, 244, 229);
+    private static final int WARNING_TEXT = Color.rgb(161, 92, 0);
+    private static final int ERROR_SOFT = Color.rgb(253, 236, 236);
+    private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
+
     private ScooterRepository repository;
-    private TextView deviceText, stateText, batteryPercentText, batteryText, rideText, tripText,
-            rangeText, totalText, tempText, statusText;
-    private Button lockButton, batteryHelpButton;
+    private TextView deviceText, stateText, lockStateText, batteryPercentText, batteryText,
+            rideText, tripText, rangeText, totalText, tempText, statusText, batteryHelpButton;
+    private Button lockButton;
     private Switch persistentSwitch, autoConnectSwitch;
     private boolean suppressSwitches;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().setStatusBarColor(BG);
+        getWindow().setNavigationBarColor(BG);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         repository = ScooterRepository.get(this);
         buildUi();
         requestBlePermissionsIfNeeded();
@@ -65,45 +81,78 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(246, 247, 249));
+        scroll.setBackgroundColor(BG);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(34), dp(20), dp(28));
-        scroll.addView(root, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        root.setPadding(dp(18), dp(18), dp(18), dp(20));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("Ninebot Max G30", 28, Color.rgb(20, 22, 25));
+        TextView title = text("Ninebot Max G30", 25, TEXT);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         root.addView(title, full(dp(2)));
-        deviceText = text("No scooter selected", 13, Color.GRAY);
-        root.addView(deviceText, full(dp(2)));
-        stateText = text("Disconnected", 16, Color.DKGRAY);
-        root.addView(stateText, full(dp(20)));
 
-        batteryPercentText = text("--%", 54, Color.rgb(25, 27, 30));
+        deviceText = text("No scooter selected", 12, MUTED);
+        root.addView(deviceText, full(dp(8)));
+
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        stateText = chip("Disconnected");
+        lockStateText = chip("Lock status —");
+        chips.addView(stateText, wrapWithRight(dp(6)));
+        chips.addView(lockStateText, wrapWithRight(0));
+        root.addView(chips, full(dp(12)));
+
+        LinearLayout hero = cardContainer();
+        hero.setPadding(dp(16), dp(12), dp(16), dp(12));
+        TextView batteryLabel = label("BATTERY");
+        hero.addView(batteryLabel);
+        batteryPercentText = text("--%", 46, TEXT);
         batteryPercentText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        batteryPercentText.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(batteryPercentText, full(dp(18)));
+        hero.addView(batteryPercentText);
+        batteryText = text("—", 15, MUTED);
+        batteryText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        hero.addView(batteryText);
+        root.addView(hero, full(dp(8)));
 
-        batteryText = addCard(root, "Battery");
-        rideText = addCard(root, "Ride");
-        tripText = addCard(root, "Trip");
-        rangeText = addCard(root, "Range");
-        totalText = addCard(root, "Total");
-        tempText = addCard(root, "Temperature");
+        TextView[] rideTrip = addMetricPair(root, "Ride", "Trip");
+        rideText = rideTrip[0];
+        tripText = rideTrip[1];
+
+        TextView[] rangeTotal = addMetricPair(root, "Range", "Total");
+        rangeText = rangeTotal[0];
+        totalText = rangeTotal[1];
+
+        LinearLayout tempCard = cardContainer();
+        tempCard.setPadding(dp(14), dp(10), dp(14), dp(10));
+        tempCard.addView(label("TEMPERATURE"));
+        tempText = text("—", 16, TEXT);
+        tempText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        tempCard.addView(tempText);
+        root.addView(tempCard, full(dp(10)));
 
         lockButton = new Button(this);
-        lockButton.setText("LOCK");
-        lockButton.setTextSize(20);
+        lockButton.setText("🔒  LOCK");
+        lockButton.setTextSize(17);
+        lockButton.setTextColor(Color.WHITE);
+        lockButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         lockButton.setAllCaps(false);
-        lockButton.setMinHeight(dp(64));
+        lockButton.setMinHeight(0);
+        lockButton.setMinimumHeight(0);
+        lockButton.setPadding(dp(12), dp(12), dp(12), dp(12));
+        lockButton.setBackground(rounded(ACCENT, 14));
+        lockButton.setElevation(dp(2));
         lockButton.setOnClickListener(v -> {
             Boolean locked = repository.snapshot().telemetry.getLocked();
             if (Boolean.TRUE.equals(locked)) repository.unlockScooter();
             else repository.lockScooter();
         });
-        root.addView(lockButton, full(dp(16)));
+        root.addView(lockButton, full(dp(10)));
 
-        persistentSwitch = addSetting(root, "Persistent notification");
+        LinearLayout settingsCard = cardContainer();
+        settingsCard.setPadding(dp(14), dp(2), dp(8), dp(2));
+        persistentSwitch = addSetting(settingsCard, "Persistent notification");
         persistentSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
             if (suppressSwitches) return;
             if (checked && Build.VERSION.SDK_INT >= 33
@@ -115,72 +164,124 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             setPersistentConnection(checked);
         });
 
-        autoConnectSwitch = addSetting(root, "Auto connect");
+        autoConnectSwitch = addSetting(settingsCard, "Auto connect");
         autoConnectSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
             if (!suppressSwitches) repository.setAutoConnectEnabled(checked);
         });
+        root.addView(settingsCard, full(dp(8)));
 
-        batteryHelpButton = new Button(this);
-        batteryHelpButton.setText("Battery optimization help");
-        batteryHelpButton.setAllCaps(false);
+        batteryHelpButton = text("Battery optimization help  ›", 13, ACCENT);
+        batteryHelpButton.setGravity(Gravity.CENTER);
+        batteryHelpButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        batteryHelpButton.setPadding(dp(10), dp(9), dp(10), dp(9));
+        batteryHelpButton.setBackground(stroked(Color.TRANSPARENT, BORDER, 12));
         batteryHelpButton.setOnClickListener(v -> showBatteryHelp());
         batteryHelpButton.setVisibility(View.GONE);
-        root.addView(batteryHelpButton, full(dp(10)));
+        root.addView(batteryHelpButton, full(dp(8)));
 
-        Button selectButton = new Button(this);
-        selectButton.setText("Select / change scooter");
-        selectButton.setAllCaps(false);
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button selectButton = secondaryButton("Change scooter");
         selectButton.setOnClickListener(v -> startScooterPicker());
-        root.addView(selectButton, full(dp(8)));
-
-        Button shortcutButton = new Button(this);
-        shortcutButton.setText("Add home lock shortcut");
-        shortcutButton.setAllCaps(false);
+        Button shortcutButton = secondaryButton("Home shortcut");
         shortcutButton.setOnClickListener(v -> requestHomeShortcut());
-        root.addView(shortcutButton, full(dp(12)));
+        actionRow.addView(selectButton, weightedWithMargins(true));
+        actionRow.addView(shortcutButton, weightedWithMargins(false));
+        root.addView(actionRow, full(dp(8)));
 
-        statusText = text("Ready", 13, Color.DKGRAY);
+        statusText = text("Ready", 12, MUTED);
         statusText.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(statusText, full(0));
+
         setContentView(scroll);
     }
 
-    private TextView addCard(LinearLayout root, String label) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(12), dp(16), dp(12));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setCornerRadius(dp(16));
-        bg.setStroke(dp(1), Color.rgb(225, 227, 230));
-        card.setBackground(bg);
-        TextView labelView = text(label, 12, Color.GRAY);
-        TextView valueView = text("—", 20, Color.rgb(25, 27, 30));
-        valueView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        card.addView(labelView);
-        card.addView(valueView);
-        root.addView(card, full(dp(10)));
-        return valueView;
+    private TextView[] addMetricPair(LinearLayout root, String leftLabel, String rightLabel) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView left = addMetricCard(row, leftLabel, true);
+        TextView right = addMetricCard(row, rightLabel, false);
+        root.addView(row, full(dp(8)));
+        return new TextView[]{left, right};
     }
 
-    private Switch addSetting(LinearLayout root, String label) {
+    private TextView addMetricCard(LinearLayout row, String title, boolean first) {
+        LinearLayout card = cardContainer();
+        card.setPadding(dp(14), dp(10), dp(14), dp(10));
+        card.setMinimumHeight(dp(68));
+        card.addView(label(title.toUpperCase(Locale.US)));
+        TextView value = text("—", 18, TEXT);
+        value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(value);
+        row.addView(card, weightedWithMargins(first));
+        return value;
+    }
+
+    private LinearLayout cardContainer() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(stroked(CARD, BORDER, 16));
+        card.setElevation(dp(1));
+        return card;
+    }
+
+    private TextView label(String value) {
+        TextView out = text(value, 10, MUTED);
+        out.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        out.setLetterSpacing(0.08f);
+        return out;
+    }
+
+    private TextView chip(String value) {
+        TextView out = text(value, 12, MUTED);
+        out.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        out.setPadding(dp(10), dp(5), dp(10), dp(5));
+        out.setBackground(rounded(Color.rgb(238, 241, 245), 99));
+        return out;
+    }
+
+    private Switch addSetting(LinearLayout parent, String title) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView text = text(label, 16, Color.rgb(30, 32, 35));
+        row.setPadding(0, dp(7), 0, dp(7));
+        TextView text = text(title, 15, TEXT);
         row.addView(text, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Switch toggle = new Switch(this);
+        toggle.setMinHeight(0);
+        toggle.setMinimumHeight(0);
         row.addView(toggle);
-        root.addView(row, full(dp(10)));
+        parent.addView(row, full(0));
         return toggle;
     }
 
-    @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) { runOnUiThread(() -> render(snapshot)); }
+    private Button secondaryButton(String title) {
+        Button button = new Button(this);
+        button.setText(title);
+        button.setTextSize(13);
+        button.setTextColor(TEXT);
+        button.setAllCaps(false);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(dp(8), dp(9), dp(8), dp(9));
+        button.setBackground(stroked(CARD, BORDER, 12));
+        return button;
+    }
+
+    @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) {
+        runOnUiThread(() -> render(snapshot));
+    }
 
     private void render(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        deviceText.setText(snapshot.address == null ? "No scooter selected" : snapshot.deviceName + " · " + snapshot.address);
+        String name = snapshot.deviceName == null || snapshot.deviceName.trim().isEmpty()
+                ? "Ninebot Max G30" : snapshot.deviceName;
+        deviceText.setText(snapshot.address == null ? "No scooter selected" : name + "  ·  " + snapshot.address);
+
         stateText.setText(prettyState(snapshot.connectionState));
+        styleConnectionChip(snapshot.connectionState);
+        styleLockChip(t.getLocked());
+
         statusText.setText(snapshot.status == null ? "" : snapshot.status);
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
         batteryText.setText(formatBattery(t));
@@ -189,9 +290,14 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         rangeText.setText(t.getRemainingRange() == null ? "—" : f("%.1f km", t.getRemainingRange()));
         totalText.setText(t.getTotalDistance() == null ? "—" : f("%,.1f km", t.getTotalDistance()));
         tempText.setText(formatTemperature(t));
+
         Boolean locked = t.getLocked();
-        lockButton.setText(Boolean.TRUE.equals(locked) ? "UNLOCK" : "LOCK");
+        boolean isLocked = Boolean.TRUE.equals(locked);
+        lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔒  LOCK");
+        lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
         lockButton.setEnabled(snapshot.address != null);
+        lockButton.setAlpha(snapshot.address == null ? 0.45f : 1f);
+
         suppressSwitches = true;
         persistentSwitch.setChecked(snapshot.persistent);
         autoConnectSwitch.setChecked(snapshot.autoConnect);
@@ -199,20 +305,56 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         updateBatteryHelpVisibility(snapshot.persistent);
     }
 
+    private void styleConnectionChip(ScooterConnectionState state) {
+        int bg = Color.rgb(238, 241, 245);
+        int fg = MUTED;
+        if (state == ScooterConnectionState.READY) {
+            bg = ACCENT_SOFT;
+            fg = ACCENT;
+        } else if (state == ScooterConnectionState.RECONNECTING
+                || state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.SCANNING
+                || state == ScooterConnectionState.CONNECTED) {
+            bg = WARNING_SOFT;
+            fg = WARNING_TEXT;
+        } else if (state == ScooterConnectionState.ERROR) {
+            bg = ERROR_SOFT;
+            fg = ERROR_TEXT;
+        }
+        stateText.setTextColor(fg);
+        stateText.setBackground(rounded(bg, 99));
+    }
+
+    private void styleLockChip(Boolean locked) {
+        if (Boolean.TRUE.equals(locked)) {
+            lockStateText.setText("🔒 Locked");
+            lockStateText.setTextColor(Color.rgb(52, 64, 84));
+            lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
+        } else if (Boolean.FALSE.equals(locked)) {
+            lockStateText.setText("🔓 Unlocked");
+            lockStateText.setTextColor(ACCENT);
+            lockStateText.setBackground(rounded(ACCENT_SOFT, 99));
+        } else {
+            lockStateText.setText("Lock status —");
+            lockStateText.setTextColor(MUTED);
+            lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
+        }
+    }
+
     private String formatBattery(ScooterTelemetry t) {
         ArrayList<String> parts = new ArrayList<>();
         if (t.getBatteryVoltage() != null) parts.add(f("%.1f V", t.getBatteryVoltage()));
         if (t.getBatteryCurrent() != null) parts.add(f("%.2f A", t.getBatteryCurrent()));
         if (t.getBatteryPower() != null) parts.add(f("%.0f W", t.getBatteryPower()));
-        return parts.isEmpty() ? "—" : String.join(" · ", parts);
+        return parts.isEmpty() ? "—" : String.join("  ·  ", parts);
     }
 
     private String formatTemperature(ScooterTelemetry t) {
         if (t.getControllerTemperature() != null && t.getBatteryTemperature() != null) {
-            return f("Controller %.1f°C · Battery %.1f°C", t.getControllerTemperature(), t.getBatteryTemperature());
+            return f("Controller %.0f°C  ·  Battery %.0f°C", t.getControllerTemperature(), t.getBatteryTemperature());
         }
-        if (t.getControllerTemperature() != null) return f("Controller %.1f°C", t.getControllerTemperature());
-        if (t.getBatteryTemperature() != null) return f("Battery %.1f°C", t.getBatteryTemperature());
+        if (t.getControllerTemperature() != null) return f("Controller %.0f°C", t.getControllerTemperature());
+        if (t.getBatteryTemperature() != null) return f("Battery %.0f°C", t.getBatteryTemperature());
         return "—";
     }
 
@@ -291,7 +433,10 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     }
 
     private void updateBatteryHelpVisibility(boolean persistent) {
-        if (!persistent || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { batteryHelpButton.setVisibility(View.GONE); return; }
+        if (!persistent || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            batteryHelpButton.setVisibility(View.GONE);
+            return;
+        }
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         boolean ignored = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         batteryHelpButton.setVisibility(ignored ? View.GONE : View.VISIBLE);
@@ -320,7 +465,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         if (hasBlePermissions()) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}, REQ_BLE);
-        } else requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_BLE);
+        } else {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_BLE);
+        }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
@@ -329,7 +476,8 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             if (hasBlePermissions()) repository.setUiActive(true);
             else Toast.makeText(this, "Bluetooth access is required to connect to the G30.", Toast.LENGTH_LONG).show();
         } else if (requestCode == REQ_NOTIFICATIONS) {
-            boolean granted = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+            boolean granted = Build.VERSION.SDK_INT < 33
+                    || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
             if (granted) setPersistentConnection(true);
             else Toast.makeText(this, "Notification permission is needed for the persistent connection.", Toast.LENGTH_LONG).show();
         }
@@ -362,12 +510,46 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         return view;
     }
 
+    private GradientDrawable rounded(int color, int radiusDp) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(radiusDp));
+        return bg;
+    }
+
+    private GradientDrawable stroked(int color, int strokeColor, int radiusDp) {
+        GradientDrawable bg = rounded(color, radiusDp);
+        bg.setStroke(dp(1), strokeColor);
+        return bg;
+    }
+
     private LinearLayout.LayoutParams full(int bottom) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         p.setMargins(0, 0, 0, bottom);
         return p;
     }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-    private static String f(String format, Object... args) { return String.format(Locale.US, format, args); }
+    private LinearLayout.LayoutParams wrapWithRight(int right) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p.setMargins(0, 0, right, 0);
+        return p;
+    }
+
+    private LinearLayout.LayoutParams weightedWithMargins(boolean first) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        if (first) p.setMargins(0, 0, dp(4), 0);
+        else p.setMargins(dp(4), 0, 0, 0);
+        return p;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static String f(String format, Object... args) {
+        return String.format(Locale.US, format, args);
+    }
 }

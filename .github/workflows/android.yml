@@ -64,29 +64,29 @@ jobs:
       - name: Select publishable APK
         run: |
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk Ninebot-scooter-blocker-v0.8.0.apk
+            cp app/build/outputs/apk/release/app-release.apk Ninebot-scooter-blocker-v0.8.1.apk
           else
-            cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.8.0.apk
+            cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.8.1.apk
           fi
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.8.0-apk
-          path: Ninebot-scooter-blocker-v0.8.0.apk
+          name: Ninebot-scooter-blocker-v0.8.1-apk
+          path: Ninebot-scooter-blocker-v0.8.1.apk
           if-no-files-found: error
 
-      - name: Publish v0.8.0 release APK
+      - name: Publish v0.8.1 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES='Ninebot Max G30 companion release. Preserves the known-good SHU 2.7 authentication and lock/unlock transport; adds centralized BLE/repository architecture, read-only live telemetry, foreground connection service, persistent battery notification with lock/unlock actions, remembered-scooter serial verification, throttled telemetry polling and 1/2/5/10/30 second reconnect backoff. Existing G30 lock/unlock path remains the hardware-tested compatibility baseline; new telemetry should be validated on the same scooter.'
-          if gh release view v0.8.0 >/dev/null 2>&1; then
-            gh release upload v0.8.0 Ninebot-scooter-blocker-v0.8.0.apk --clobber
-            gh release edit v0.8.0 --notes "$NOTES"
+          NOTES='Compact dashboard refresh for Ninebot Max G30. Fixes remaining-range scaling to 10 m units, adds explicit Locked/Unlocked indicator, one dynamic LOCK/UNLOCK notification action, smaller battery-optimization help, compact telemetry grid, refreshed controls and a new adaptive launcher icon. Existing SHU 2.7 authentication and lock/unlock packet path is unchanged.'
+          if gh release view v0.8.1 >/dev/null 2>&1; then
+            gh release upload v0.8.1 Ninebot-scooter-blocker-v0.8.1.apk --clobber
+            gh release edit v0.8.1 --notes "$NOTES"
           else
-            gh release create v0.8.0 Ninebot-scooter-blocker-v0.8.0.apk \
+            gh release create v0.8.1 Ninebot-scooter-blocker-v0.8.1.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.8.0" \
+              --title "Ninebot Scooter Blocker v0.8.1" \
               --notes "$NOTES"
           fi

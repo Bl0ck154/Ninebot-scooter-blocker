@@ -14,10 +14,11 @@ The project intentionally keeps the G30 BLE/authentication path that already wor
 - trip distance, odometer and remaining range;
 - controller and battery temperature when returned by the scooter;
 - foreground service for an ongoing connection while the Activity is closed;
-- persistent, throttled battery/ride notification;
+- persistent, throttled battery/ride notification with a dynamic lock/unlock action;
 - reconnect backoff: 1 s, 2 s, 5 s, 10 s, then 30 s;
 - saved BLE address/name plus authenticated scooter serial verification;
-- adaptive telemetry polling and no permanent CPU wake lock.
+- adaptive telemetry polling and no permanent CPU wake lock;
+- compact daily-use dashboard and adaptive launcher icon.
 
 ## Tested model
 
@@ -25,7 +26,7 @@ The project intentionally keeps the G30 BLE/authentication path that already wor
 
 Do not assume support for G30LP, G30D, G30P, G2, F-series or other Segway/Ninebot models merely because some protocol registers are related. They are not listed as tested here.
 
-The telemetry implementation targets the documented Ninebot KickScooter Max/G30 register map. Because the new telemetry layer cannot be hardware-tested by CI, validate its readings on the same G30 before treating every optional metric as confirmed for every firmware revision. Unsupported/unreturned values stay blank rather than being fabricated.
+The telemetry implementation targets the documented Ninebot KickScooter Max/G30 register map. Remaining range is interpreted in 10 m units, matching the Segway BLE SDK and the observed G30 value. Unsupported/unreturned values stay blank rather than being fabricated.
 
 ## Architecture
 
@@ -70,4 +71,4 @@ Every push to `main` runs:
 5. workflow artifact upload;
 6. GitHub Release publication for the app version.
 
-Current companion release: **v0.8.0**.
+Current companion release: **v0.8.1**.

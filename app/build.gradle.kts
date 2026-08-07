@@ -20,8 +20,8 @@ android {
         applicationId = "com.bl0ck154.ninebotblocker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "0.8.0"
+        versionCode = 16
+        versionName = "0.8.1"
     }
 
     signingConfigs {

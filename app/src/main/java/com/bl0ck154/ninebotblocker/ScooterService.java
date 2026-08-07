@@ -114,6 +114,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 ? "🛴 Ninebot Max"
                 : "🛴 Ninebot Max — " + t.getBatteryPercent() + "%";
         String text = notificationText(snapshot);
+        Boolean locked = t.getLocked();
+        String toggleLabel = Boolean.TRUE.equals(locked) ? "🔓 UNLOCK" : "🔒 LOCK";
 
         Intent contentIntent = new Intent(this, BootstrapActivity.class);
         PendingIntent content = PendingIntent.getActivity(this, 10, contentIntent,
@@ -131,10 +133,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 .setShowWhen(false)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .addAction(new Notification.Action.Builder(null, "LOCK",
-                        servicePendingIntent(ACTION_LOCK, 11)).build())
-                .addAction(new Notification.Action.Builder(null, "UNLOCK",
-                        servicePendingIntent(ACTION_UNLOCK, 12)).build())
+                .addAction(new Notification.Action.Builder(null, toggleLabel,
+                        servicePendingIntent(ACTION_TOGGLE, 11)).build())
                 .addAction(new Notification.Action.Builder(null, "DISCONNECT",
                         servicePendingIntent(ACTION_STOP, 13)).build());
         return builder.build();
@@ -142,26 +142,29 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private String notificationText(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        Integer battery = t.getBatteryPercent();
         Double speed = t.getSpeed();
         Double range = t.getRemainingRange();
         Double trip = t.getTripDistance();
         Double voltage = t.getBatteryVoltage();
 
+        String base;
         if (speed != null && speed >= 1.0) {
-            StringBuilder out = new StringBuilder();
-            if (battery != null) out.append(battery).append("% · ");
-            out.append(String.format(Locale.US, "%.1f km/h", speed));
-            if (range != null) out.append(String.format(Locale.US, " · %.1f km range", range));
-            return out.toString();
+            base = String.format(Locale.US, "%.1f km/h", speed);
+            if (range != null) base += String.format(Locale.US, " · %.1f km range", range);
+        } else if (range != null && trip != null) {
+            base = String.format(Locale.US, "%.1f km range · %.1f km trip", range, trip);
+        } else if (voltage != null && trip != null) {
+            base = String.format(Locale.US, "%.1f V · %.1f km trip", voltage, trip);
+        } else {
+            base = snapshot.status == null ? snapshot.connectionState.name() : snapshot.status;
         }
-        if (range != null && trip != null) {
-            return String.format(Locale.US, "%.1f km range · %.1f km trip", range, trip);
-        }
-        if (voltage != null && trip != null) {
-            return String.format(Locale.US, "%.1f V · %.1f km trip", voltage, trip);
-        }
-        return snapshot.status == null ? snapshot.connectionState.name() : snapshot.status;
+        return appendLockState(base, t.getLocked());
+    }
+
+    private static String appendLockState(String base, Boolean locked) {
+        if (Boolean.TRUE.equals(locked)) return base + " · Locked";
+        if (Boolean.FALSE.equals(locked)) return base + " · Unlocked";
+        return base;
     }
 
     private PendingIntent servicePendingIntent(String action, int requestCode) {

@@ -19,14 +19,14 @@ public class G30ProtocolTest {
         assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_BATTERY, le16(73)), t));
         assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_SPEED, le16(273)), t));
         assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_TRIP, le16(1240)), t));
-        assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_RANGE, le16(310)), t));
+        assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_RANGE, le16(5850)), t));
         assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_CONTROLLER_TEMP, le16(315)), t));
         assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_ODOMETER, le32(12_481_000L)), t));
 
         assertEquals(Integer.valueOf(73), t.getBatteryPercent());
         assertEquals(27.3, t.getSpeed(), 0.001);
         assertEquals(12.4, t.getTripDistance(), 0.001);
-        assertEquals(31.0, t.getRemainingRange(), 0.001);
+        assertEquals(58.5, t.getRemainingRange(), 0.001);
         assertEquals(31.5, t.getControllerTemperature(), 0.001);
         assertEquals(12_481.0, t.getTotalDistance(), 0.001);
     }
@@ -47,6 +47,12 @@ public class G30ProtocolTest {
         ScooterTelemetry t = new ScooterTelemetry();
         assertFalse(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_BATTERY, le16(500)), t));
         assertNull(t.getBatteryPercent());
+    }
+
+    @Test public void rejectsImpossibleRange() {
+        ScooterTelemetry t = new ScooterTelemetry();
+        assertFalse(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_RANGE, le16(25_000)), t));
+        assertNull(t.getRemainingRange());
     }
 
     private static byte[] response(int register, byte[] payload) {

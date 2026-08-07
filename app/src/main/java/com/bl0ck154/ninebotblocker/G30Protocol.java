@@ -74,7 +74,6 @@ public final class G30Protocol {
             }
             case REG_SPEED: {
                 if (payload.length < 2) return false;
-                // Ninebot quick speed is S16 in 0.1 km/h.
                 double value = Math.abs(s16(payload, 0)) / 10.0;
                 if (value > 120.0) return false;
                 telemetry.setSpeed(value);
@@ -82,20 +81,20 @@ public final class G30Protocol {
             }
             case REG_ODOMETER: {
                 if (payload.length < 4) return false;
-                // G30 total mileage is an unsigned 32-bit metre counter.
                 telemetry.setTotalDistance(u32(payload, 0) / 1000.0);
                 return true;
             }
             case REG_TRIP: {
                 if (payload.length < 2) return false;
-                // Single mileage uses 10 m units.
                 telemetry.setTripDistance(u16(payload, 0) / 100.0);
                 return true;
             }
             case REG_RANGE: {
                 if (payload.length < 2) return false;
-                // Remaining range uses 0.1 km units on the Max register map.
-                telemetry.setRemainingRange(u16(payload, 0) / 10.0);
+                // G30/Segway remaining range is encoded in 10 m units.
+                double value = u16(payload, 0) / 100.0;
+                if (value < 0.0 || value > 200.0) return false;
+                telemetry.setRemainingRange(value);
                 return true;
             }
             case REG_CONTROLLER_TEMP: {
@@ -107,13 +106,11 @@ public final class G30Protocol {
             }
             case REG_BMS_CURRENT: {
                 if (payload.length < 2) return false;
-                // BMS current is S16 in 10 mA units.
                 telemetry.setBatteryCurrent(s16(payload, 0) / 100.0);
                 return true;
             }
             case REG_BMS_VOLTAGE: {
                 if (payload.length < 2) return false;
-                // BMS voltage is S16 in 10 mV units.
                 double value = s16(payload, 0) / 100.0;
                 if (value < 0 || value > 100) return false;
                 telemetry.setBatteryVoltage(value);
@@ -121,7 +118,6 @@ public final class G30Protocol {
             }
             case REG_BMS_TEMP: {
                 if (payload.length < 2) return false;
-                // Each byte is one BMS sensor encoded as 0..119 => -20..99 C.
                 int sensor = payload[0] & 0xFF;
                 if (sensor > 119) return false;
                 telemetry.setBatteryTemperature((double) sensor - 20.0);
