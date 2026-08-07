@@ -17,6 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decode stable signing keystore
+        run: |
+          mkdir -p ci
+          base64 -d ci/stable-debug-keystore.b64 > ci/ninebot-debug.keystore
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -37,28 +42,31 @@ jobs:
       - name: Test Ninebot protocol and crypto
         run: gradle --no-daemon :app:testDebugUnitTest
 
-      - name: Build debug-signed APK
+      - name: Build stable-signed APK
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Verify APK signature
+        run: apksigner verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.3.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.3.1.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.3.0-apk
-          path: Ninebot-scooter-blocker-v0.3.0.apk
+          name: Ninebot-scooter-blocker-v0.3.1-apk
+          path: Ninebot-scooter-blocker-v0.3.1.apk
           if-no-files-found: error
 
-      - name: Publish v0.3.0 release APK
+      - name: Publish v0.3.1 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.3.0 >/dev/null 2>&1; then
-            gh release upload v0.3.0 Ninebot-scooter-blocker-v0.3.0.apk --clobber
+          if gh release view v0.3.1 >/dev/null 2>&1; then
+            gh release upload v0.3.1 Ninebot-scooter-blocker-v0.3.1.apk --clobber
           else
-            gh release create v0.3.0 Ninebot-scooter-blocker-v0.3.0.apk \
+            gh release create v0.3.1 Ninebot-scooter-blocker-v0.3.1.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.3.0" \
-              --notes "Fixes NinebotCrypto message-counter state after INIT so PING is encrypted with the next counter, matching ScooterHacking NinebotCrypto. Keeps direct auto-connect, queued one-tap LOCK, and live BLE discovery."
+              --title "Ninebot Scooter Blocker v0.3.1" \
+              --notes "Fixes NinebotCrypto INIT->PING message-counter state and switches CI to a stable personal debug signing key, so future APKs can update in place."
           fi
