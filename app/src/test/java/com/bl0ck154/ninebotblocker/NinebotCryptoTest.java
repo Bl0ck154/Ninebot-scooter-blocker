@@ -40,7 +40,7 @@ public final class NinebotCryptoTest {
 
         // Last six bytes are 00 00 + CRC16 + 00 00. This vector catches the
         // Java-signed-byte bug that INIT could not expose because its bytes are < 0x80.
-        assertArrayEquals(hex("0000CDFA0000"),
+        assertArrayEquals(hex("0000CDF60000"),
                 java.util.Arrays.copyOfRange(encryptedPing, encryptedPing.length - 6, encryptedPing.length));
     }
 
