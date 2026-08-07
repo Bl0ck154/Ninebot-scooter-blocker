@@ -39,7 +39,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Test exact SHU Ninebot protocol
+      - name: Test exact SHU 2.7 NinebotCrypto protocol
         run: gradle --no-daemon :app:testDebugUnitTest
 
       - name: Build stable-signed APK
@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.3.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.6.0.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.5.3-apk
-          path: Ninebot-scooter-blocker-v0.5.3.apk
+          name: Ninebot-scooter-blocker-v0.6.0-apk
+          path: Ninebot-scooter-blocker-v0.6.0.apk
           if-no-files-found: error
 
-      - name: Publish v0.5.3 release APK
+      - name: Publish v0.6.0 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.5.3 >/dev/null 2>&1; then
-            gh release upload v0.5.3 Ninebot-scooter-blocker-v0.5.3.apk --clobber
+          if gh release view v0.6.0 >/dev/null 2>&1; then
+            gh release upload v0.6.0 Ninebot-scooter-blocker-v0.6.0.apk --clobber
           else
-            gh release create v0.5.3 Ninebot-scooter-blocker-v0.5.3.apk \
+            gh release create v0.6.0 Ninebot-scooter-blocker-v0.6.0.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.5.3" \
-              --notes "Diagnostic Android 12+ BLE scan permission fix. Adds a launcher bootstrap that requests Bluetooth Scan/Connect plus ACCESS_FINE_LOCATION so Android can return unfiltered BLE advertisements; keeps the v0.5.2 disconnect-before-scan logic and leaves the lock protocol unchanged."
+              --title "Ninebot Scooter Blocker v0.6.0" \
+              --notes "Exact ScooterHacking Utility 2.7 NinebotCrypto port for the target G30: PHONE source 0x3E, SHU fixed app key, SHU counter/re-key state, 5B/5C/5D auth loop, and exact encrypted LOCK logical command 3E 20 02 70 01. Restores the minimal UI and filters the scooter picker instead of dumping every BLE device."
           fi
