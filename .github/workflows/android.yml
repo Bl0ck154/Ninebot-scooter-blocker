@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.2.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.3.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.5.2-apk
-          path: Ninebot-scooter-blocker-v0.5.2.apk
+          name: Ninebot-scooter-blocker-v0.5.3-apk
+          path: Ninebot-scooter-blocker-v0.5.3.apk
           if-no-files-found: error
 
-      - name: Publish v0.5.2 release APK
+      - name: Publish v0.5.3 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.5.2 >/dev/null 2>&1; then
-            gh release upload v0.5.2 Ninebot-scooter-blocker-v0.5.2.apk --clobber
+          if gh release view v0.5.3 >/dev/null 2>&1; then
+            gh release upload v0.5.3 Ninebot-scooter-blocker-v0.5.3.apk --clobber
           else
-            gh release create v0.5.2 Ninebot-scooter-blocker-v0.5.2.apk \
+            gh release create v0.5.3 Ninebot-scooter-blocker-v0.5.3.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.5.2" \
-              --notes "Diagnostic scan fix: Select/change scooter now closes the active GATT connection, suppresses auto-reconnect while scanning, waits briefly for the G30 to resume advertising, then starts an unfiltered low-latency BLE scan and logs the target advertising bytes. Lock command remains unchanged for this diagnostic step."
+              --title "Ninebot Scooter Blocker v0.5.3" \
+              --notes "Diagnostic Android 12+ BLE scan permission fix. Adds a launcher bootstrap that requests Bluetooth Scan/Connect plus ACCESS_FINE_LOCATION so Android can return unfiltered BLE advertisements; keeps the v0.5.2 disconnect-before-scan logic and leaves the lock protocol unchanged."
           fi
