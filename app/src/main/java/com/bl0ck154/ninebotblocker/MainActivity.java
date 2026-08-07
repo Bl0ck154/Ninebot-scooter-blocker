@@ -19,7 +19,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
-import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -39,6 +39,8 @@ public final class MainActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LinkedHashMap<String, BluetoothDevice> scanDevices = new LinkedHashMap<>();
+    private final ArrayList<BluetoothDevice> visibleScanDevices = new ArrayList<>();
+    private final ArrayList<String> visibleScanLabels = new ArrayList<>();
 
     private BluetoothAdapter adapter;
     private BluetoothLeScanner scanner;
@@ -48,7 +50,11 @@ public final class MainActivity extends Activity {
     private Button lockButton;
     private Button selectButton;
     private NinebotBleClient client;
+    private AlertDialog scanDialog;
+    private ArrayAdapter<String> scanListAdapter;
     private boolean scanning;
+    private boolean connecting;
+    private boolean lockPending;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -58,6 +64,7 @@ public final class MainActivity extends Activity {
         adapter = manager == null ? null : manager.getAdapter();
         buildUi();
         refreshBoundDevice();
+        main.post(this::autoConnectIfPossible);
     }
 
     private void buildUi() {
@@ -152,10 +159,24 @@ public final class MainActivity extends Activity {
         if (requestCode == REQ_PERMISSIONS) {
             if (hasBlePermissions()) {
                 Toast.makeText(this, "Bluetooth permission granted", Toast.LENGTH_SHORT).show();
+                autoConnectIfPossible();
             } else {
                 status("Bluetooth permission is required.", false);
             }
         }
+    }
+
+    private void autoConnectIfPossible() {
+        if (prefs.getString(PREF_ADDRESS, null) == null) return;
+        if (!hasBlePermissions()) {
+            requestBlePermissions();
+            return;
+        }
+        if (adapter == null || !adapter.isEnabled()) {
+            status("Turn Bluetooth on — saved scooter will connect automatically.", false);
+            return;
+        }
+        if (!connecting && (client == null || !client.isReady())) connectBoundScooter(false);
     }
 
     private void lockBoundScooter() {
@@ -167,29 +188,59 @@ public final class MainActivity extends Activity {
             status("Turn Bluetooth on first.", false);
             return;
         }
-        String address = prefs.getString(PREF_ADDRESS, null);
-        if (address == null) {
+        if (prefs.getString(PREF_ADDRESS, null) == null) {
             beginScan();
             return;
         }
 
+        lockPending = true;
+        lockButton.setEnabled(false);
+        if (client != null && (connecting || client.isReady())) {
+            client.lockWhenReady();
+        } else {
+            connectBoundScooter(true);
+        }
+    }
+
+    private void connectBoundScooter(boolean queueLock) {
+        String address = prefs.getString(PREF_ADDRESS, null);
+        String name = prefs.getString(PREF_NAME, null);
+        if (address == null) return;
+
         try {
             BluetoothDevice device = adapter.getRemoteDevice(address);
-            setBusy(true);
+            if (client != null) client.cancel();
+            connecting = true;
             client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
-                @Override
-                public void onStatus(String text) {
+                @Override public void onStatus(String text) {
                     status(text, true);
                 }
 
-                @Override
-                public void onFinished(boolean success, String message) {
-                    setBusy(false);
+                @Override public void onReady() {
+                    connecting = false;
+                    lockButton.setEnabled(!lockPending);
+                    status("Connected + authenticated. LOCK is ready.", true);
+                }
+
+                @Override public void onDisconnected(String reason) {
+                    connecting = false;
+                    lockPending = false;
+                    lockButton.setEnabled(prefs.getString(PREF_ADDRESS, null) != null);
+                    status(reason, false);
+                }
+
+                @Override public void onLockResult(boolean success, String message) {
+                    connecting = false;
+                    lockPending = false;
+                    lockButton.setEnabled(true);
                     status(message, success);
                 }
             });
-            client.lock(device);
+            client.connect(device, name);
+            if (queueLock) client.lockWhenReady();
         } catch (IllegalArgumentException e) {
+            connecting = false;
+            lockPending = false;
             status("Saved Bluetooth address is invalid. Select the scooter again.", false);
             prefs.edit().remove(PREF_ADDRESS).remove(PREF_NAME).apply();
             refreshBoundDevice();
@@ -212,13 +263,32 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        if (scanning) stopScanAndShow();
+        stopScanQuietly();
         scanDevices.clear();
+        visibleScanDevices.clear();
+        visibleScanLabels.clear();
+        scanListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, visibleScanLabels);
+
+        scanDialog = new AlertDialog.Builder(this)
+                .setTitle("Select your Ninebot — live scan")
+                .setAdapter(scanListAdapter, (dialog, which) -> {
+                    if (which >= 0 && which < visibleScanDevices.size()) bind(visibleScanDevices.get(which));
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> stopScanQuietly())
+                .create();
+        scanDialog.setOnDismissListener(dialog -> stopScanQuietly());
+        scanDialog.show();
+
         scanning = true;
         selectButton.setEnabled(false);
-        status("Scanning for nearby BLE devices for 8 seconds…", true);
+        status("Live BLE scan — devices appear immediately.", true);
         scanner.startScan(scanCallback);
-        main.postDelayed(this::stopScanAndShow, 8000);
+        main.postDelayed(() -> {
+            if (scanning) {
+                stopScanQuietly();
+                status("Live scan paused. Tap Select / change scooter to scan again.", true);
+            }
+        }, 12000);
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -227,54 +297,46 @@ public final class MainActivity extends Activity {
         public void onScanResult(int callbackType, ScanResult result) {
             BluetoothDevice d = result.getDevice();
             if (d == null) return;
-            String name;
-            try {
-                name = d.getName();
-            } catch (SecurityException e) {
-                name = null;
-            }
-            if (name != null && !name.isBlank()) {
-                scanDevices.put(d.getAddress(), d);
-            }
+            String name = safeName(d);
+            if (name == null || name.isBlank() || "BLE device".equals(name)) return;
+            scanDevices.put(d.getAddress(), d);
+            main.post(MainActivity.this::refreshLiveScanList);
         }
     };
 
     @SuppressLint("MissingPermission")
-    private void stopScanAndShow() {
-        if (!scanning) return;
-        scanning = false;
-        selectButton.setEnabled(true);
-        if (scanner != null) {
-            try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
-        }
-
-        if (scanDevices.isEmpty()) {
-            status("No named BLE devices found. Keep the scooter powered on and nearby, then scan again.", false);
-            return;
-        }
-
+    private void refreshLiveScanList() {
+        if (scanListAdapter == null) return;
         List<Map.Entry<String, BluetoothDevice>> entries = new ArrayList<>(scanDevices.entrySet());
         entries.sort((a, b) -> Boolean.compare(!isLikelyNinebot(a.getValue()), !isLikelyNinebot(b.getValue())));
-        String[] labels = new String[entries.size()];
-        for (int i = 0; i < entries.size(); i++) {
-            BluetoothDevice d = entries.get(i).getValue();
-            labels[i] = safeName(d) + "\n" + d.getAddress();
-        }
 
-        new AlertDialog.Builder(this)
-                .setTitle("Select your Ninebot")
-                .setItems(labels, (dialog, which) -> bind(entries.get(which).getValue()))
-                .setNegativeButton("Cancel", null)
-                .show();
-        status("Select the scooter from the list.", true);
+        visibleScanDevices.clear();
+        visibleScanLabels.clear();
+        for (Map.Entry<String, BluetoothDevice> entry : entries) {
+            BluetoothDevice d = entry.getValue();
+            visibleScanDevices.add(d);
+            visibleScanLabels.add(safeName(d) + "\n" + d.getAddress());
+        }
+        scanListAdapter.notifyDataSetChanged();
+    }
+
+    @SuppressLint("MissingPermission")
+    private void stopScanQuietly() {
+        if (scanning && scanner != null) {
+            try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
+        }
+        scanning = false;
+        if (selectButton != null) selectButton.setEnabled(true);
     }
 
     @SuppressLint("MissingPermission")
     private void bind(BluetoothDevice d) {
+        stopScanQuietly();
         String name = safeName(d);
         prefs.edit().putString(PREF_ADDRESS, d.getAddress()).putString(PREF_NAME, name).apply();
         refreshBoundDevice();
-        status("Bound to " + name + ". Tap LOCK when needed.", true);
+        status("Saved " + name + ". Connecting directly…", true);
+        connectBoundScooter(false);
     }
 
     @SuppressLint("MissingPermission")
@@ -294,11 +356,6 @@ public final class MainActivity extends Activity {
                 || n.contains("g30") || n.contains("max");
     }
 
-    private void setBusy(boolean busy) {
-        lockButton.setEnabled(!busy && prefs.getString(PREF_ADDRESS, null) != null);
-        selectButton.setEnabled(!busy && !scanning);
-    }
-
     private void status(String text, boolean ok) {
         statusText.setText(text);
         statusText.setTextColor(ok ? Color.rgb(40, 100, 55) : Color.rgb(170, 35, 35));
@@ -309,9 +366,15 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (prefs != null) main.postDelayed(this::autoConnectIfPossible, 150);
+    }
+
+    @Override
     protected void onDestroy() {
+        stopScanQuietly();
         if (client != null) client.cancel();
-        if (scanning) stopScanAndShow();
         super.onDestroy();
     }
 }
