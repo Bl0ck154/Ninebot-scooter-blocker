@@ -75,6 +75,7 @@ public final class NinebotBleClient {
                 g.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (commandSent) {
+                    // NB_CTL_LOCK is documented to reset the scooter automatically after a lock.
                     finish(true, "Lock command sent. Scooter disconnected/reset after the command.");
                 } else {
                     finish(false, "Bluetooth disconnected before the lock command was sent.");
@@ -131,7 +132,7 @@ public final class NinebotBleClient {
         @Override
         public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (finished.get()) return;
-            if (statusCode != BluetoothGatt.GATT_SUCCESS && phase == 0) {
+            if (statusCode != BluetoothGatt.GATT_SUCCESS && phase == 1) {
                 status("Reply-mode write failed; trying compatibility mode…");
                 sendCompatibilitySequence(g);
             }
@@ -148,9 +149,9 @@ public final class NinebotBleClient {
     private void sendReplyRequest(BluetoothGatt g) {
         if (finished.get() || rx == null || phase != 0) return;
         phase = 1;
-        commandSent = true;
         status("Sending LOCK (0x70 = 1)…");
         boolean queued = write(g, NinebotProtocol.lockPacket(NinebotProtocol.SOURCE_PC, true), true);
+        commandSent = queued;
         if (!queued) {
             sendCompatibilitySequence(g);
             return;
@@ -165,17 +166,18 @@ public final class NinebotBleClient {
     private void sendCompatibilitySequence(BluetoothGatt g) {
         if (finished.get() || rx == null || phase >= 2) return;
         phase = 2;
-        commandSent = true;
         status("No ACK yet. Sending plain compatibility LOCK…");
-        write(g, NinebotProtocol.lockPacket(NinebotProtocol.SOURCE_PC, false), false);
+        boolean firstQueued = write(g, NinebotProtocol.lockPacket(NinebotProtocol.SOURCE_PC, false), false);
+        commandSent = commandSent || firstQueued;
 
         main.postDelayed(() -> {
             if (finished.get() || rx == null) return;
             status("Trying phone source ID compatibility…");
-            write(g, NinebotProtocol.lockPacket(NinebotProtocol.SOURCE_PHONE, false), false);
+            boolean secondQueued = write(g, NinebotProtocol.lockPacket(NinebotProtocol.SOURCE_PHONE, false), false);
+            commandSent = commandSent || secondQueued;
             main.postDelayed(() -> {
                 if (!finished.get()) {
-                    finish(true, "Lock command sent, but no protocol ACK was received. Check that the wheel is electronically braked. If not, this firmware likely requires encrypted authentication.");
+                    finish(false, "Lock packet was sent but the controller did not acknowledge it. Check whether the wheel is electronically braked. If it is not, this firmware likely requires encrypted Ninebot authentication.");
                 }
             }, 900);
         }, 450);
