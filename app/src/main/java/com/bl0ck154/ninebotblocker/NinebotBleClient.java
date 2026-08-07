@@ -9,16 +9,19 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
  * Minimal one-scooter BLE client matching ScooterHacking Utility 2.7's
- * classic Ninebot path. There is deliberately no INIT/PING/PAIR handshake.
+ * classic Ninebot path. v0.5.1 adds verbose diagnostics but deliberately
+ * does not invent any new protocol handshakes.
  */
 public final class NinebotBleClient {
     public interface Listener {
@@ -48,7 +51,7 @@ public final class NinebotBleClient {
 
     private final Runnable connectionTimeout = () -> {
         if (!cancelled && !ready) {
-            failConnection("Connection timed out. Keep the scooter on and close other scooter apps.");
+            failConnection("Connection timed out before UART became ready.");
         }
     };
 
@@ -75,10 +78,14 @@ public final class NinebotBleClient {
         if (name == null || name.isBlank()) name = safeName(device);
         if (name == null || name.isBlank()) name = "Ninebot";
 
-        status("Connecting directly to " + name + "…");
+        status("GATT connect start: " + name + " / " + device.getAddress());
         main.removeCallbacks(connectionTimeout);
-        main.postDelayed(connectionTimeout, 10000);
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
+        main.postDelayed(connectionTimeout, 12000);
+        try {
+            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
+        } catch (Exception e) {
+            failConnection("connectGatt exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
     }
 
     /** Queue the user's click if Android is still establishing the BLE connection. */
@@ -86,7 +93,7 @@ public final class NinebotBleClient {
         if (cancelled) return;
         if (!isReady()) {
             pendingLock = true;
-            status("LOCK queued — connecting to scooter…");
+            status("LOCK queued; waiting for UART ready");
             return;
         }
         sendLock();
@@ -95,6 +102,11 @@ public final class NinebotBleClient {
     @SuppressLint("MissingPermission")
     public void cancel() {
         cancelInternal(true);
+    }
+
+    @SuppressLint("MissingPermission")
+    public void closeSilently() {
+        cancelInternal(false);
     }
 
     @SuppressLint("MissingPermission")
@@ -122,14 +134,21 @@ public final class NinebotBleClient {
         @SuppressLint("MissingPermission")
         public void onConnectionStateChange(BluetoothGatt g, int statusCode, int newState) {
             if (cancelled || g != gatt) return;
+            status("GATT state: status=" + statusCode + " newState=" + stateName(newState));
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                status("Connected. Opening Ninebot UART…");
+                try {
+                    boolean priority = g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+                    status("requestConnectionPriority(HIGH)=" + priority);
+                } catch (Exception e) {
+                    status("requestConnectionPriority exception: " + e.getMessage());
+                }
+                status("discoverServices() start");
                 if (!g.discoverServices()) {
                     failConnection("Could not start BLE service discovery.");
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 ready = false;
-                failConnection("Scooter disconnected (GATT " + statusCode + ").");
+                failConnection("Scooter disconnected (GATT status " + statusCode + ").");
             }
         }
 
@@ -137,6 +156,14 @@ public final class NinebotBleClient {
         @SuppressLint("MissingPermission")
         public void onServicesDiscovered(BluetoothGatt g, int statusCode) {
             if (cancelled || g != gatt) return;
+            status("Services discovered: status=" + statusCode + " count=" + g.getServices().size());
+            for (BluetoothGattService service : g.getServices()) {
+                status("SERVICE " + service.getUuid());
+                for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
+                    status("  CHAR " + c.getUuid() + " props=0x" + Integer.toHexString(c.getProperties()));
+                }
+            }
+
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 failConnection("Could not discover BLE services (GATT " + statusCode + ").");
                 return;
@@ -144,41 +171,48 @@ public final class NinebotBleClient {
 
             BluetoothGattService service = g.getService(UART_SERVICE);
             if (service == null) {
-                failConnection("Ninebot Nordic UART service was not found.");
+                failConnection("Expected Nordic UART service " + UART_SERVICE + " was NOT found. See service list above.");
                 return;
             }
             rx = service.getCharacteristic(UART_RX);
             BluetoothGattCharacteristic tx = service.getCharacteristic(UART_TX);
             if (rx == null || tx == null) {
-                failConnection("Ninebot UART characteristics were not found.");
+                failConnection("Nordic UART service exists, but RX/TX characteristic is missing.");
+                return;
+            }
+            status("Nordic UART found: RX(write)=" + UART_RX + " TX(notify)=" + UART_TX);
+
+            BluetoothGattDescriptor cccd = tx.getDescriptor(CCCD);
+            if (cccd == null) {
+                failConnection("UART TX has no CCCD descriptor.");
+                return;
+            }
+            boolean localNotify = g.setCharacteristicNotification(tx, true);
+            status("setCharacteristicNotification(TX,true)=" + localNotify);
+            if (!localNotify) {
+                failConnection("Could not enable local Ninebot notifications.");
                 return;
             }
 
-            BluetoothGattDescriptor cccd = tx.getDescriptor(CCCD);
-            if (cccd == null || !g.setCharacteristicNotification(tx, true)) {
-                failConnection("Could not enable Ninebot notifications.");
-                return;
-            }
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            status("UART found. Finishing connection…");
+            status("Writing TX CCCD 01 00");
             if (!g.writeDescriptor(cccd)) {
-                failConnection("Could not subscribe to Ninebot notifications.");
+                failConnection("Android rejected the TX CCCD descriptor write.");
             }
         }
 
         @Override
         public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int statusCode) {
             if (cancelled || g != gatt) return;
+            status("Descriptor write callback: " + descriptor.getUuid() + " status=" + statusCode);
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 failConnection("Notification setup failed (GATT " + statusCode + ").");
                 return;
             }
 
-            // This is what SHU 2.7 does for its classic Ninebot mode: once the
-            // normal Nordic UART is connected, commands can be sent immediately.
             ready = true;
             main.removeCallbacks(connectionTimeout);
-            status("Connected — SHU classic Ninebot mode. Ready.");
+            status("UART READY; no INIT/PING/PAIR is being sent");
             main.post(listener::onReady);
             if (pendingLock) {
                 pendingLock = false;
@@ -188,18 +222,26 @@ public final class NinebotBleClient {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
-            // Lock-only v0.5 does not need telemetry. Notifications are enabled to
-            // mirror SHU's normal UART setup and to leave room for later verification.
+            if (cancelled || g != gatt) return;
+            byte[] value = characteristic.getValue();
+            handleRx(characteristic, value);
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic, byte[] value) {
+            if (cancelled || g != gatt) return;
+            handleRx(characteristic, value);
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (cancelled || g != gatt) return;
             writeInFlight = false;
+            status("TX callback: status=" + statusCode + " uuid=" + characteristic.getUuid());
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 lockInFlight = false;
                 main.post(() -> listener.onLockResult(false,
-                        "Bluetooth accepted the connection but the SHU LOCK write failed (GATT " + statusCode + ")."));
+                        "BLE characteristic write failed (GATT " + statusCode + "). See diagnostic log."));
                 return;
             }
 
@@ -211,22 +253,32 @@ public final class NinebotBleClient {
             if (lockInFlight) {
                 lockInFlight = false;
                 main.post(() -> listener.onLockResult(true,
-                        "SHU LOCK command sent: 5A A5 01 3E 20 32 70 01 FD FE"));
+                        "Android confirmed SHU LOCK bytes were written. Check whether scooter actually locked; RX is in the log."));
             }
         }
+
+        @Override
+        public void onMtuChanged(BluetoothGatt g, int mtu, int statusCode) {
+            if (cancelled || g != gatt) return;
+            status("MTU changed: mtu=" + mtu + " status=" + statusCode);
+        }
     };
+
+    private void handleRx(BluetoothGattCharacteristic characteristic, byte[] value) {
+        if (value == null) value = new byte[0];
+        status("RX " + characteristic.getUuid() + " [" + value.length + "] " + hex(value));
+    }
 
     private void sendLock() {
         if (!isReady() || lockInFlight) return;
         lockInFlight = true;
         byte[] frame = ShuNinebotProtocol.plainLockFrame();
-        status("Sending exact SHU 2.7 LOCK: " + ShuNinebotProtocol.hex(frame));
+        status("LOCK TX exact SHU frame [" + frame.length + "]: " + hex(frame));
         enqueueRaw(frame);
     }
 
     private void enqueueRaw(byte[] frame) {
         if (cancelled || rx == null || frame == null) return;
-        // Keep Nordic-UART chunks at 20 bytes for compatibility with the old G30 BLE.
         for (int offset = 0; offset < frame.length; offset += 20) {
             int n = Math.min(20, frame.length - offset);
             writeQueue.add(Arrays.copyOfRange(frame, offset, offset + n));
@@ -243,15 +295,25 @@ public final class NinebotBleClient {
         writeInFlight = true;
         rx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rx.setValue(chunk);
-        if (!gatt.writeCharacteristic(rx)) {
+        status("TX writeType=DEFAULT [" + chunk.length + "] " + hex(chunk));
+        boolean accepted;
+        try {
+            accepted = gatt.writeCharacteristic(rx);
+        } catch (Exception e) {
+            accepted = false;
+            status("writeCharacteristic exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        status("writeCharacteristic() accepted=" + accepted);
+        if (!accepted) {
             writeInFlight = false;
             lockInFlight = false;
-            main.post(() -> listener.onLockResult(false, "Android rejected the BLE write."));
+            main.post(() -> listener.onLockResult(false, "Android rejected the BLE write. See diagnostic log."));
         }
     }
 
     private void failConnection(String message) {
         if (cancelled) return;
+        status("FAIL: " + message);
         cancelInternal(false);
         main.post(() -> listener.onDisconnected(message));
     }
@@ -268,5 +330,23 @@ public final class NinebotBleClient {
         } catch (SecurityException e) {
             return "";
         }
+    }
+
+    private String stateName(int state) {
+        if (state == BluetoothProfile.STATE_CONNECTED) return "CONNECTED";
+        if (state == BluetoothProfile.STATE_CONNECTING) return "CONNECTING";
+        if (state == BluetoothProfile.STATE_DISCONNECTED) return "DISCONNECTED";
+        if (state == BluetoothProfile.STATE_DISCONNECTING) return "DISCONNECTING";
+        return String.valueOf(state);
+    }
+
+    private static String hex(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return "<empty>";
+        StringBuilder out = new StringBuilder(bytes.length * 3);
+        for (int i = 0; i < bytes.length; i++) {
+            if (i > 0) out.append(' ');
+            out.append(String.format(Locale.US, "%02X", bytes[i] & 0xFF));
+        }
+        return out.toString();
     }
 }
