@@ -34,7 +34,7 @@ public final class NinebotProtocolTest {
                 0x05,
                 0x70,
                 0x01,
-                0x31, (byte) 0xFF
+                0x2B, (byte) 0xFF
         };
         assertTrue(NinebotProtocol.isPositiveWriteAck(ack, NinebotProtocol.REG_LOCK));
 
