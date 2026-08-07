@@ -3,7 +3,7 @@ package com.bl0ck154.ninebotblocker;
 import java.util.Arrays;
 import java.util.Locale;
 
-/** Packet shapes taken directly from ScooterHacking Utility 2.7. */
+/** Packet shapes taken directly from ScooterHacking Utility 2.7 / Ninebot protocol. */
 public final class ShuNinebotProtocol {
     private ShuNinebotProtocol() {}
 
@@ -11,13 +11,19 @@ public final class ShuNinebotProtocol {
     public static final int TARGET_ESC = 0x20;
     public static final int TARGET_BLE = 0x21;
 
+    public static final int CMD_READ_REGISTER = 0x01;
     public static final int CMD_WRITE_REGISTER = 0x02;
+    public static final int CMD_READ_ACK = 0x04;
     public static final int CMD_INIT = 0x5B;
     public static final int CMD_PING = 0x5C;
     public static final int CMD_PAIR = 0x5D;
-    public static final int REG_LOCK = 0x70;
 
-    /** Exact 16-byte application key embedded in SHU 2.7's w2() pairing command. */
+    public static final int REG_LOCK_STATE = 0x1D;
+    public static final int REG_LOCK = 0x70;
+    public static final int REG_UNLOCK = 0x71;
+    public static final int LOCK_STATE_BIT = 0x0002;
+
+    /** Exact 16-byte application key embedded in SHU 2.7's pairing command. */
     public static final byte[] SHU_APP_KEY = hex("4AEEBD73E2161C112D065A49CC6E8BB7");
 
     public static byte[] initPacket() {
@@ -49,7 +55,7 @@ public final class ShuNinebotProtocol {
         return wrapCryptoPlain(command);
     }
 
-    /** Exact SHU WriteRegister command: 3E 20 02 70 01. */
+    /** Exact SHU WriteRegister LOCK command: 3E 20 02 70 01. */
     public static byte[] lockPacket() {
         return wrapCryptoPlain(new byte[]{
                 (byte) SOURCE_PHONE,
@@ -58,6 +64,36 @@ public final class ShuNinebotProtocol {
                 (byte) REG_LOCK,
                 0x01
         });
+    }
+
+    /** Exact SHU WriteRegister UNLOCK command: 3E 20 02 71 01. */
+    public static byte[] unlockPacket() {
+        return wrapCryptoPlain(new byte[]{
+                (byte) SOURCE_PHONE,
+                (byte) TARGET_ESC,
+                (byte) CMD_WRITE_REGISTER,
+                (byte) REG_UNLOCK,
+                0x01
+        });
+    }
+
+    /** Read two bytes from ESC register 0x1D; bit 0x0002 is the software-lock state. */
+    public static byte[] readLockStatePacket() {
+        return wrapCryptoPlain(new byte[]{
+                (byte) SOURCE_PHONE,
+                (byte) TARGET_ESC,
+                (byte) CMD_READ_REGISTER,
+                (byte) REG_LOCK_STATE,
+                0x02
+        });
+    }
+
+    public static Boolean lockStateFromResponse(byte[] packet) {
+        if (!isPacket(packet) || index(packet) != REG_LOCK_STATE) return null;
+        byte[] payload = payload(packet);
+        if (payload.length < 2) return null;
+        int value = (payload[0] & 0xFF) | ((payload[1] & 0xFF) << 8);
+        return (value & LOCK_STATE_BIT) != 0;
     }
 
     /**
