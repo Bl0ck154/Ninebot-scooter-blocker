@@ -9,10 +9,12 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Minimal Java implementation of the NinebotCrypto transport used by newer dashboards.
+ * Minimal Java implementation of the Ninebot encrypted 5A A5 transport.
  *
- * The counter/state behaviour follows the public ScooterHacking NinebotCrypto protocol.
- * This class is intentionally limited to transport encryption used by this app.
+ * Counter/state behaviour intentionally follows dnandha/miauth NbCrypto, which is
+ * used by ownbee/ninebot-ble. In particular, receiving a packet synchronizes the
+ * local counter from the packet trailer; a counter of 0 keeps using the first-message
+ * cipher even after BLE data has been learned from INIT.
  */
 public final class NinebotCrypto {
     private static final byte[] FW_DATA = hex("97CFB802844143DE56002B3B34780A5D");
@@ -55,6 +57,7 @@ public final class NinebotCrypto {
         return counter;
     }
 
+    /** Encrypt exactly like miauth.nb.nbcrypto.NbCrypto.encrypt(). */
     public byte[] encrypt(byte[] plainPacket) {
         if (plainPacket == null || plainPacket.length < 3) {
             throw new IllegalArgumentException("Invalid Ninebot packet");
@@ -64,7 +67,9 @@ public final class NinebotCrypto {
         byte[] result = new byte[plainPacket.length + 6];
         System.arraycopy(plainPacket, 0, result, 0, 3);
 
-        if (counter == 0) {
+        // miauth keeps using the first-message transport while the synchronized
+        // counter is zero. INIT responses on G30 commonly carry 00 00 here.
+        if (counter == 0 || bleData == null) {
             byte[] encrypted = cryptoFirst(payload);
             System.arraycopy(encrypted, 0, result, 3, encrypted.length);
             int p = 3 + encrypted.length;
@@ -75,11 +80,8 @@ public final class NinebotCrypto {
             result[p + 3] = crc[1];
             result[p + 4] = 0;
             result[p + 5] = 0;
-
-            // Critical Ninebot state transition: INIT consumes counter 0.
-            counter = 1;
         } else {
-            counter = (counter + 1) & 0xFFFFFFFF;
+            counter = (counter + 1) & 0xFFFF;
             if (counter == 0) counter = 1;
 
             byte[] encrypted = cryptoNext(payload, counter);
@@ -93,6 +95,7 @@ public final class NinebotCrypto {
         return result;
     }
 
+    /** Decrypt exactly like miauth NbCrypto: trailer counter is authoritative. */
     public byte[] decrypt(byte[] encryptedPacket) {
         if (encryptedPacket == null || encryptedPacket.length < 9) {
             throw new IllegalArgumentException("Encrypted Ninebot packet is too short");
@@ -101,24 +104,14 @@ public final class NinebotCrypto {
         int payloadLength = encryptedPacket.length - 9;
         byte[] encryptedPayload = Arrays.copyOfRange(encryptedPacket, 3, 3 + payloadLength);
 
-        int low16 = ((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
+        counter = ((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
                 | (encryptedPacket[encryptedPacket.length - 1] & 0xFF);
-        int responseCounter = (counter & 0xFFFF0000) | low16;
 
         byte[] decrypted;
-        if (responseCounter == 0) {
-            // The INIT reply uses the first-message cipher, but it must NOT reset the
-            // local TX counter that already advanced to 1 after sending INIT.
+        if (counter == 0 || bleData == null) {
             decrypted = cryptoFirst(encryptedPayload);
         } else {
-            decrypted = cryptoNext(encryptedPayload, responseCounter);
-
-            // Match NinebotCrypto's counter resynchronisation behaviour.
-            if (Integer.compareUnsigned(counter, responseCounter) > 0) {
-                counter = responseCounter;
-            } else {
-                counter = counter + 1;
-            }
+            decrypted = cryptoNext(encryptedPayload, counter);
         }
 
         byte[] result = new byte[3 + decrypted.length];
@@ -195,10 +188,11 @@ public final class NinebotCrypto {
         return data;
     }
 
+    /** Python bytearray sum is unsigned; do not sum Java signed bytes here. */
     private static byte[] crcFirst(byte[] data) {
         long sum = 0;
-        for (byte b : data) sum += b;
-        long crc = ~sum;
+        for (byte b : data) sum += (b & 0xFF);
+        long crc = (~sum) & 0xFFFF;
         return new byte[]{(byte) (crc & 0xFF), (byte) ((crc >>> 8) & 0xFF)};
     }
 
