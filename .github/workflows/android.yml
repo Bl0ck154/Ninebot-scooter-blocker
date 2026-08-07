@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.3.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.3.2.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.3.1-apk
-          path: Ninebot-scooter-blocker-v0.3.1.apk
+          name: Ninebot-scooter-blocker-v0.3.2-apk
+          path: Ninebot-scooter-blocker-v0.3.2.apk
           if-no-files-found: error
 
-      - name: Publish v0.3.1 release APK
+      - name: Publish v0.3.2 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.3.1 >/dev/null 2>&1; then
-            gh release upload v0.3.1 Ninebot-scooter-blocker-v0.3.1.apk --clobber
+          if gh release view v0.3.2 >/dev/null 2>&1; then
+            gh release upload v0.3.2 Ninebot-scooter-blocker-v0.3.2.apk --clobber
           else
-            gh release create v0.3.1 Ninebot-scooter-blocker-v0.3.1.apk \
+            gh release create v0.3.2 Ninebot-scooter-blocker-v0.3.2.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.3.1" \
-              --notes "Fixes NinebotCrypto INIT->PING message-counter state and switches CI to a stable personal debug signing key, so future APKs can update in place."
+              --title "Ninebot Scooter Blocker v0.3.2" \
+              --notes "Matches miauth/ownbee Ninebot crypto semantics after INIT: synchronize counter from scooter response, keep zero-counter PING on first-message cipher, and calculate first-message CRC with unsigned bytes."
           fi
