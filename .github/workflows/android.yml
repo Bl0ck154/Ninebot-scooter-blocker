@@ -39,7 +39,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Test Ninebot protocols
+      - name: Test exact SHU Ninebot protocol
         run: gradle --no-daemon :app:testDebugUnitTest
 
       - name: Build stable-signed APK
@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.4.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.0.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.4.0-apk
-          path: Ninebot-scooter-blocker-v0.4.0.apk
+          name: Ninebot-scooter-blocker-v0.5.0-apk
+          path: Ninebot-scooter-blocker-v0.5.0.apk
           if-no-files-found: error
 
-      - name: Publish v0.4.0 release APK
+      - name: Publish v0.5.0 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.4.0 >/dev/null 2>&1; then
-            gh release upload v0.4.0 Ninebot-scooter-blocker-v0.4.0.apk --clobber
+          if gh release view v0.5.0 >/dev/null 2>&1; then
+            gh release upload v0.5.0 Ninebot-scooter-blocker-v0.5.0.apk --clobber
           else
-            gh release create v0.4.0 Ninebot-scooter-blocker-v0.4.0.apk \
+            gh release create v0.5.0 Ninebot-scooter-blocker-v0.5.0.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.4.0" \
-              --notes "Switches to legacy-first protocol auto-detection. Classic G30 dashboards are probed with the Ninebot/M365 55AA protocol and lock via register 0x70 without authentication; encrypted 5AA5 authentication remains as fallback for newer dashboards."
+              --title "Ninebot Scooter Blocker v0.5.0" \
+              --notes "Reimplements the classic Ninebot G30 lock path from ScooterHacking Utility 2.7. Removes the incorrect INIT/PING/PAIR flow and sends SHU's exact classic lock frame: 5A A5 01 3E 20 32 70 01 FD FE over Nordic UART."
           fi
