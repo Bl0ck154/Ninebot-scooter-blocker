@@ -34,31 +34,31 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Test Ninebot protocol
+      - name: Test Ninebot protocol and crypto
         run: gradle --no-daemon :app:testDebugUnitTest
 
       - name: Build debug-signed APK
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.2.0.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-debug-apk
-          path: Ninebot-scooter-blocker-debug.apk
+          name: Ninebot-scooter-blocker-v0.2.0-apk
+          path: Ninebot-scooter-blocker-v0.2.0.apk
           if-no-files-found: error
 
-      - name: Publish v0.1.0 release APK
+      - name: Publish v0.2.0 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.1.0 >/dev/null 2>&1; then
-            gh release upload v0.1.0 Ninebot-scooter-blocker-debug.apk --clobber
+          if gh release view v0.2.0 >/dev/null 2>&1; then
+            gh release upload v0.2.0 Ninebot-scooter-blocker-v0.2.0.apk --clobber
           else
-            gh release create v0.1.0 Ninebot-scooter-blocker-debug.apk \
+            gh release create v0.2.0 Ninebot-scooter-blocker-v0.2.0.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.1.0" \
-              --notes "First Android test build. Debug-signed APK for testing the one-tap Ninebot G30 software lock command."
+              --title "Ninebot Scooter Blocker v0.2.0" \
+              --notes "Test build with NinebotCrypto authentication, direct auto-connect to the saved scooter, queued one-tap LOCK, and live BLE device discovery. On first encrypted pairing the scooter may ask for one press of the power button."
           fi
