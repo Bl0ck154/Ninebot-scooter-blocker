@@ -37,7 +37,7 @@ public final class NinebotBleClient {
     private static final String APP_KEY_PREFIX = "app_key_";
 
     private final Context context;
-    private final Listener listener;
+    private Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<byte[]> writeQueue = new ArrayDeque<>();
     private final ByteArrayOutputStream receiveBuffer = new ByteArrayOutputStream();
@@ -154,20 +154,20 @@ public final class NinebotBleClient {
         @Override
         @SuppressLint("MissingPermission")
         public void onConnectionStateChange(BluetoothGatt g, int statusCode, int newState) {
-            if (cancelled) return;
+            if (cancelled || g != gatt) return;
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 status("Connected. Opening Ninebot UART…");
                 if (!g.discoverServices()) failConnection("Could not start BLE service discovery.");
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 ready = false;
-                if (!cancelled) failConnection("Scooter disconnected (GATT " + statusCode + ").");
+                failConnection("Scooter disconnected (GATT " + statusCode + ").");
             }
         }
 
         @Override
         @SuppressLint("MissingPermission")
         public void onServicesDiscovered(BluetoothGatt g, int statusCode) {
-            if (cancelled) return;
+            if (cancelled || g != gatt) return;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 failConnection("Could not discover BLE services (GATT " + statusCode + ").");
                 return;
@@ -199,7 +199,7 @@ public final class NinebotBleClient {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int statusCode) {
-            if (cancelled) return;
+            if (cancelled || g != gatt) return;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 failConnection("Notification setup failed (GATT " + statusCode + ").");
                 return;
@@ -210,13 +210,14 @@ public final class NinebotBleClient {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
+            if (cancelled || g != gatt) return;
             byte[] value = characteristic.getValue();
             if (value != null && value.length > 0) handleEncryptedFragment(value);
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int statusCode) {
-            if (cancelled) return;
+            if (cancelled || g != gatt) return;
             writeInFlight = false;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 failConnection("Bluetooth write failed (GATT " + statusCode + ").");
@@ -368,10 +369,8 @@ public final class NinebotBleClient {
 
     private void failConnection(String message) {
         if (cancelled) return;
-        boolean wasReady = ready;
         cancelInternal(false);
-        if (wasReady) listener.onDisconnected(message);
-        else listener.onDisconnected(message);
+        listener.onDisconnected(message);
     }
 
     private void status(String text) {
