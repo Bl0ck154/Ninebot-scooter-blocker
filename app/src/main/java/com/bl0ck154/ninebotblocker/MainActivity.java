@@ -37,14 +37,14 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 public final class MainActivity extends Activity {
     private static final int REQ_PERMISSIONS = 42;
     private static final String PREFS = "ninebot_quick_lock";
     private static final String PREF_ADDRESS = "address";
     private static final String PREF_NAME = "name";
-    private static final int MAX_LOG_CHARS = 18000;
+    private static final String PREF_ADV = "adv";
+    private static final int MAX_LOG_CHARS = 24000;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LinkedHashMap<String, ScanResult> scanResults = new LinkedHashMap<>();
@@ -66,6 +66,7 @@ public final class MainActivity extends Activity {
     private AlertDialog scanDialog;
     private ArrayAdapter<String> scanListAdapter;
     private boolean scanning;
+    private boolean scanMode;
     private boolean connecting;
     private boolean lockPending;
 
@@ -76,7 +77,7 @@ public final class MainActivity extends Activity {
         BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
         buildUi();
-        appendLog("APP", "v0.5.1 diagnostic build started; Android " + Build.VERSION.RELEASE + " / SDK " + Build.VERSION.SDK_INT);
+        appendLog("APP", "v0.5.2 diagnostic build started; Android " + Build.VERSION.RELEASE + " / SDK " + Build.VERSION.SDK_INT);
         refreshBoundDevice();
         main.post(this::autoConnectIfPossible);
     }
@@ -84,15 +85,12 @@ public final class MainActivity extends Activity {
     private void buildUi() {
         ScrollView page = new ScrollView(this);
         page.setFillViewport(true);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         root.setPadding(dp(20), dp(32), dp(20), dp(28));
         root.setBackgroundColor(Color.rgb(245, 245, 245));
-        page.addView(root, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
+        page.addView(root, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
         TextView title = new TextView(this);
         title.setText("Ninebot Quick Lock");
@@ -113,8 +111,7 @@ public final class MainActivity extends Activity {
         lockButton.setAllCaps(false);
         lockButton.setMinHeight(dp(76));
         lockButton.setOnClickListener(v -> lockBoundScooter());
-        LinearLayout.LayoutParams lockParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(86));
+        LinearLayout.LayoutParams lockParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(86));
         lockParams.setMargins(0, 0, 0, dp(14));
         root.addView(lockButton, lockParams);
 
@@ -126,7 +123,6 @@ public final class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setTextSize(14);
-        statusText.setTextColor(Color.DKGRAY);
         statusText.setGravity(Gravity.CENTER);
         statusText.setText("Ready");
         root.addView(statusText, matchWrap(dp(16)));
@@ -140,9 +136,7 @@ public final class MainActivity extends Activity {
 
         logScroll = new ScrollView(this);
         logScroll.setBackgroundColor(Color.rgb(232, 232, 232));
-        logScroll.setFillViewport(true);
-        LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(250));
+        LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(260));
         logParams.setMargins(0, 0, 0, dp(10));
         root.addView(logScroll, logParams);
 
@@ -152,38 +146,33 @@ public final class MainActivity extends Activity {
         logText.setTypeface(Typeface.MONOSPACE);
         logText.setTextIsSelectable(true);
         logText.setPadding(dp(9), dp(8), dp(9), dp(8));
-        logScroll.addView(logText, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
+        logScroll.addView(logText, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout logButtons = new LinearLayout(this);
-        logButtons.setOrientation(LinearLayout.HORIZONTAL);
-        logButtons.setGravity(Gravity.CENTER);
-        root.addView(logButtons, matchWrap(0));
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(buttons, matchWrap(0));
 
-        Button copyLog = new Button(this);
-        copyLog.setText("Copy log");
-        copyLog.setAllCaps(false);
-        copyLog.setOnClickListener(v -> copyLog());
-        logButtons.addView(copyLog, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button copy = new Button(this);
+        copy.setText("Copy log");
+        copy.setAllCaps(false);
+        copy.setOnClickListener(v -> copyLog());
+        buttons.addView(copy, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        Button clearLog = new Button(this);
-        clearLog.setText("Clear log");
-        clearLog.setAllCaps(false);
-        clearLog.setOnClickListener(v -> {
+        Button clear = new Button(this);
+        clear.setText("Clear log");
+        clear.setAllCaps(false);
+        clear.setOnClickListener(v -> {
             logBuffer.setLength(0);
             logText.setText("");
             appendLog("APP", "Log cleared");
         });
-        logButtons.addView(clearLog, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        buttons.addView(clear, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         setContentView(page);
     }
 
     private LinearLayout.LayoutParams matchWrap(int bottomMargin) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         p.setMargins(0, 0, 0, bottomMargin);
         return p;
     }
@@ -211,10 +200,7 @@ public final class MainActivity extends Activity {
     private void requestBlePermissions() {
         appendLog("PERM", "Requesting BLE permissions");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            requestPermissions(new String[]{
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT
-            }, REQ_PERMISSIONS);
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}, REQ_PERMISSIONS);
         } else {
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_PERMISSIONS);
         }
@@ -226,7 +212,6 @@ public final class MainActivity extends Activity {
         if (requestCode == REQ_PERMISSIONS) {
             if (hasBlePermissions()) {
                 appendLog("PERM", "BLE permissions granted");
-                Toast.makeText(this, "Bluetooth permission granted", Toast.LENGTH_SHORT).show();
                 autoConnectIfPossible();
             } else {
                 status("Bluetooth permission is required.", false);
@@ -235,11 +220,12 @@ public final class MainActivity extends Activity {
     }
 
     private void autoConnectIfPossible() {
-        String saved = prefs.getString(PREF_ADDRESS, null);
-        if (saved == null) {
-            appendLog("AUTO", "No saved scooter; waiting for selection");
+        if (scanMode || scanning) {
+            appendLog("AUTO", "Auto-connect suppressed because scan mode is active");
             return;
         }
+        String saved = prefs.getString(PREF_ADDRESS, null);
+        if (saved == null) return;
         if (!hasBlePermissions()) {
             requestBlePermissions();
             return;
@@ -268,44 +254,38 @@ public final class MainActivity extends Activity {
             beginScan();
             return;
         }
-
         lockPending = true;
         lockButton.setEnabled(false);
-        if (client != null && (connecting || client.isReady())) {
-            client.lockWhenReady();
-        } else {
-            connectBoundScooter(true);
-        }
+        if (client != null && (connecting || client.isReady())) client.lockWhenReady();
+        else connectBoundScooter(true);
     }
 
     private void connectBoundScooter(boolean queueLock) {
+        if (scanMode || scanning) {
+            appendLog("CONNECT", "Blocked connect request while scanning");
+            return;
+        }
         String address = prefs.getString(PREF_ADDRESS, null);
         String name = prefs.getString(PREF_NAME, null);
         if (address == null) return;
-
         try {
             BluetoothDevice device = adapter.getRemoteDevice(address);
             if (client != null) client.closeSilently();
             connecting = true;
             appendLog("CONNECT", "Creating GATT connection to " + address + " name=" + (name == null ? "?" : name));
             client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
-                @Override public void onStatus(String text) {
-                    status(text, true);
-                }
-
+                @Override public void onStatus(String text) { status(text, true); }
                 @Override public void onReady() {
                     connecting = false;
                     lockButton.setEnabled(!lockPending);
                     status("Connected. LOCK is ready.", true);
                 }
-
                 @Override public void onDisconnected(String reason) {
                     connecting = false;
                     lockPending = false;
                     lockButton.setEnabled(prefs.getString(PREF_ADDRESS, null) != null);
                     status(reason, false);
                 }
-
                 @Override public void onLockResult(boolean success, String message) {
                     connecting = false;
                     lockPending = false;
@@ -317,16 +297,13 @@ public final class MainActivity extends Activity {
             if (queueLock) client.lockWhenReady();
         } catch (IllegalArgumentException e) {
             connecting = false;
-            lockPending = false;
             status("Saved Bluetooth address is invalid. Select the scooter again.", false);
-            prefs.edit().remove(PREF_ADDRESS).remove(PREF_NAME).apply();
-            refreshBoundDevice();
         }
     }
 
     @SuppressLint("MissingPermission")
     private void beginScan() {
-        appendLog("SCAN", "User started live scan");
+        appendLog("SCAN", "User requested scan");
         if (!hasBlePermissions()) {
             requestBlePermissions();
             return;
@@ -335,70 +312,87 @@ public final class MainActivity extends Activity {
             status("Turn Bluetooth on first.", false);
             return;
         }
-        scanner = adapter.getBluetoothLeScanner();
-        if (scanner == null) {
-            status("BLE scanner is unavailable.", false);
-            return;
-        }
 
-        stopScanQuietly();
+        scanMode = true;
+        lockPending = false;
+        connecting = false;
+        if (client != null) {
+            appendLog("SCAN", "Closing active GATT before scan so scooter can advertise again");
+            client.closeSilently();
+            client = null;
+        }
+        stopScanOnly();
+
         scanResults.clear();
         visibleScanResults.clear();
         visibleScanLabels.clear();
         scanListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, visibleScanLabels);
-
         scanDialog = new AlertDialog.Builder(this)
-                .setTitle("Select scooter — live BLE scan")
+                .setTitle("Select scooter — disconnecting, then scanning")
                 .setAdapter(scanListAdapter, (dialog, which) -> {
                     if (which >= 0 && which < visibleScanResults.size()) bind(visibleScanResults.get(which));
                 })
-                .setNegativeButton("Cancel", (dialog, which) -> stopScanQuietly())
+                .setNegativeButton("Cancel", (dialog, which) -> {
+                    appendLog("SCAN", "Scan cancelled by user");
+                    scanMode = false;
+                    stopScanOnly();
+                    main.postDelayed(this::autoConnectIfPossible, 400);
+                })
                 .create();
-        scanDialog.setOnDismissListener(dialog -> stopScanQuietly());
+        scanDialog.setCanceledOnTouchOutside(false);
+        scanDialog.setOnDismissListener(dialog -> stopScanOnly());
         scanDialog.show();
-
-        scanning = true;
         selectButton.setEnabled(false);
-        status("Live BLE scan running — results appear immediately.", true);
+        status("Disconnecting GATT before scan…", true);
 
+        // Give the old GATT a moment to fully close. The G30 often does not advertise while connected.
+        main.postDelayed(() -> {
+            if (!scanMode) return;
+            startActualScan();
+        }, 700);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void startActualScan() {
+        scanner = adapter == null ? null : adapter.getBluetoothLeScanner();
+        if (scanner == null) {
+            scanMode = false;
+            selectButton.setEnabled(true);
+            status("BLE scanner is unavailable.", false);
+            return;
+        }
         ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setReportDelay(0)
                 .build();
         try {
+            scanning = true;
             scanner.startScan(null, settings, scanCallback);
-            appendLog("SCAN", "startScan accepted (LOW_LATENCY, no filters)");
+            appendLog("SCAN", "startScan accepted after GATT close (LOW_LATENCY, no filters)");
+            status("Live BLE scan running — G30 should advertise now.", true);
+            if (scanDialog != null) scanDialog.setTitle("Select scooter — live BLE scan");
         } catch (Exception e) {
             scanning = false;
+            scanMode = false;
             selectButton.setEnabled(true);
             status("BLE scan failed to start: " + e.getMessage(), false);
             return;
         }
-
         main.postDelayed(() -> {
-            if (scanning) {
-                appendLog("SCAN", "Auto-pausing scan after 20s; user never has to wait for this timer");
-                stopScanQuietly();
-                status("Live scan paused. Tap Select / change scooter to scan again.", true);
+            if (scanning && scanMode) {
+                appendLog("SCAN", "Auto-pausing scan after 20s");
+                stopScanOnly();
+                status("Live scan paused. Cancel and reopen to scan again.", true);
             }
         }, 20000);
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
-        @Override
-        @SuppressLint("MissingPermission")
-        public void onScanResult(int callbackType, ScanResult result) {
-            handleScanResult(result);
+        @Override public void onScanResult(int callbackType, ScanResult result) { handleScanResult(result); }
+        @Override public void onBatchScanResults(List<ScanResult> results) {
+            if (results != null) for (ScanResult result : results) handleScanResult(result);
         }
-
-        @Override
-        public void onBatchScanResults(List<ScanResult> results) {
-            if (results == null) return;
-            for (ScanResult result : results) handleScanResult(result);
-        }
-
-        @Override
-        public void onScanFailed(int errorCode) {
+        @Override public void onScanFailed(int errorCode) {
             main.post(() -> status("BLE scan failed, code " + errorCode, false));
         }
     };
@@ -410,9 +404,8 @@ public final class MainActivity extends Activity {
         boolean first = !scanResults.containsKey(address);
         scanResults.put(address, result);
         if (first) {
-            String name = scanName(result);
-            appendLog("SCAN+", name + " | " + address + " | RSSI " + result.getRssi()
-                    + " | adv=" + scanBytes(result));
+            String line = scanName(result) + " | " + address + " | RSSI " + result.getRssi() + " | adv=" + scanBytes(result);
+            appendLog(address.equalsIgnoreCase(prefs.getString(PREF_ADDRESS, "")) ? "TARGET" : "SCAN+", line);
         }
         main.post(this::refreshLiveScanList);
     }
@@ -423,142 +416,115 @@ public final class MainActivity extends Activity {
         List<ScanResult> entries = new ArrayList<>(scanResults.values());
         entries.sort((a, b) -> {
             int likely = Boolean.compare(!isLikelyNinebot(a), !isLikelyNinebot(b));
-            if (likely != 0) return likely;
-            return Integer.compare(b.getRssi(), a.getRssi());
+            return likely != 0 ? likely : Integer.compare(b.getRssi(), a.getRssi());
         });
-
         visibleScanResults.clear();
         visibleScanLabels.clear();
         for (ScanResult result : entries) {
-            BluetoothDevice d = result.getDevice();
             visibleScanResults.add(result);
             String prefix = isLikelyNinebot(result) ? "★ " : "";
-            visibleScanLabels.add(prefix + scanName(result)
-                    + "\n" + d.getAddress() + "   RSSI " + result.getRssi());
+            visibleScanLabels.add(prefix + scanName(result) + "\n" + result.getDevice().getAddress() + "   RSSI " + result.getRssi());
         }
         scanListAdapter.notifyDataSetChanged();
     }
 
     @SuppressLint("MissingPermission")
-    private void stopScanQuietly() {
+    private void bind(ScanResult result) {
+        if (result == null || result.getDevice() == null) return;
+        stopScanOnly();
+        scanMode = false;
+        BluetoothDevice d = result.getDevice();
+        String name = scanName(result);
+        String adv = scanBytes(result);
+        prefs.edit().putString(PREF_ADDRESS, d.getAddress()).putString(PREF_NAME, name).putString(PREF_ADV, adv).apply();
+        appendLog("BIND", "Saved " + name + " / " + d.getAddress() + " adv=" + adv);
+        refreshBoundDevice();
+        if (scanDialog != null && scanDialog.isShowing()) scanDialog.dismiss();
+        main.postDelayed(() -> connectBoundScooter(false), 250);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void stopScanOnly() {
         if (scanning && scanner != null) {
-            try {
-                scanner.stopScan(scanCallback);
-                appendLog("SCAN", "stopScan");
-            } catch (Exception e) {
-                appendLog("SCAN", "stopScan exception: " + e.getMessage());
-            }
+            try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
+            appendLog("SCAN", "stopScan called");
         }
         scanning = false;
         if (selectButton != null) selectButton.setEnabled(true);
     }
 
-    @SuppressLint("MissingPermission")
-    private void bind(ScanResult result) {
-        stopScanQuietly();
-        BluetoothDevice d = result.getDevice();
-        String name = scanName(result);
-        prefs.edit().putString(PREF_ADDRESS, d.getAddress()).putString(PREF_NAME, name).apply();
-        appendLog("BIND", "Saved " + name + " | " + d.getAddress() + " | adv=" + scanBytes(result));
-        refreshBoundDevice();
-        status("Saved " + name + ". Connecting directly…", true);
-        connectBoundScooter(false);
-    }
-
-    @SuppressLint("MissingPermission")
     private String scanName(ScanResult result) {
-        if (result != null) {
-            ScanRecord record = result.getScanRecord();
-            if (record != null) {
-                String advertised = record.getDeviceName();
-                if (advertised != null && !advertised.isBlank()) return advertised;
-            }
-            BluetoothDevice d = result.getDevice();
-            if (d != null) {
-                try {
-                    String cached = d.getName();
-                    if (cached != null && !cached.isBlank()) return cached;
-                } catch (SecurityException ignored) {}
-            }
+        ScanRecord record = result.getScanRecord();
+        if (record != null) {
+            String n = record.getDeviceName();
+            if (n != null && !n.isBlank()) return n;
         }
+        try {
+            String n = result.getDevice().getName();
+            if (n != null && !n.isBlank()) return n;
+        } catch (SecurityException ignored) {}
         return "(unnamed BLE)";
     }
 
-    private boolean isLikelyNinebot(ScanResult result) {
-        String name = scanName(result).toLowerCase(Locale.ROOT);
-        if (name.contains("ninebot") || name.contains("segway") || name.contains("nbscooter")
-                || name.contains("g30") || name.contains("max")) return true;
-
-        ScanRecord record = result == null ? null : result.getScanRecord();
-        byte[] raw = record == null ? null : record.getBytes();
-        if (raw == null) return false;
-        String ascii = printableAscii(raw).toLowerCase(Locale.ROOT);
-        return ascii.contains("ninebot") || ascii.contains("nbscooter") || ascii.contains("segway") || ascii.contains("g30");
-    }
-
     private String scanBytes(ScanResult result) {
-        ScanRecord record = result == null ? null : result.getScanRecord();
-        byte[] raw = record == null ? null : record.getBytes();
-        return raw == null ? "<none>" : hex(raw);
+        ScanRecord record = result.getScanRecord();
+        if (record == null || record.getBytes() == null) return "<none>";
+        return hex(record.getBytes());
     }
 
-    private String printableAscii(byte[] bytes) {
-        StringBuilder out = new StringBuilder();
-        for (byte value : bytes) {
-            int v = value & 0xFF;
-            out.append(v >= 32 && v <= 126 ? (char) v : '.');
-        }
-        return out.toString();
-    }
-
-    private String hex(byte[] bytes) {
-        StringBuilder out = new StringBuilder(bytes.length * 3);
-        for (int i = 0; i < bytes.length; i++) {
-            if (i > 0) out.append(' ');
-            out.append(String.format(Locale.US, "%02X", bytes[i] & 0xFF));
-        }
-        return out.toString();
+    private boolean isLikelyNinebot(ScanResult result) {
+        String n = scanName(result).toLowerCase(Locale.ROOT);
+        String adv = scanBytes(result).replace(" ", "").toUpperCase(Locale.ROOT);
+        return n.contains("ninebot") || n.contains("nbscooter") || n.contains("segway") || n.contains("g30") || n.contains("max")
+                || adv.contains("4E42");
     }
 
     private void status(String text, boolean ok) {
-        statusText.setText(text);
-        statusText.setTextColor(ok ? Color.rgb(40, 100, 55) : Color.rgb(170, 35, 35));
-        appendLog(ok ? "STATUS" : "ERROR", text);
-    }
-
-    private void appendLog(String tag, String message) {
         main.post(() -> {
-            String line = timeFormat.format(new Date()) + "  " + tag + "  " + message + "\n";
-            logBuffer.append(line);
-            if (logBuffer.length() > MAX_LOG_CHARS) {
-                logBuffer.delete(0, logBuffer.length() - MAX_LOG_CHARS);
-            }
-            if (logText != null) logText.setText(logBuffer.toString());
-            if (logScroll != null) logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+            statusText.setText(text);
+            statusText.setTextColor(ok ? Color.rgb(40, 100, 55) : Color.rgb(170, 35, 35));
+            appendLog("STATUS", text);
         });
     }
 
-    private void copyLog() {
-        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        if (clipboard != null) {
-            clipboard.setPrimaryClip(ClipData.newPlainText("Ninebot Quick Lock diagnostic log", logBuffer.toString()));
-            Toast.makeText(this, "Diagnostic log copied", Toast.LENGTH_SHORT).show();
+    private void appendLog(String tag, String text) {
+        String line = timeFormat.format(new Date()) + "  " + tag + "  " + text + "\n";
+        logBuffer.append(line);
+        if (logBuffer.length() > MAX_LOG_CHARS) logBuffer.delete(0, logBuffer.length() - MAX_LOG_CHARS);
+        if (logText != null) {
+            logText.setText(logBuffer.toString());
+            if (logScroll != null) logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
         }
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
+    private void copyLog() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("Ninebot diagnostic log", logBuffer.toString()));
+            Toast.makeText(this, "Log copied", Toast.LENGTH_SHORT).show();
+        }
     }
 
-    @Override
-    protected void onResume() {
+    private static String hex(byte[] data) {
+        if (data == null) return "<null>";
+        StringBuilder sb = new StringBuilder();
+        for (byte b : data) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(String.format(Locale.US, "%02X", b & 0xFF));
+        }
+        return sb.toString();
+    }
+
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    @Override protected void onResume() {
         super.onResume();
         if (prefs != null) main.postDelayed(this::autoConnectIfPossible, 150);
     }
 
-    @Override
-    protected void onDestroy() {
-        stopScanQuietly();
+    @Override protected void onDestroy() {
+        scanMode = false;
+        stopScanOnly();
         if (client != null) client.closeSilently();
         super.onDestroy();
     }
