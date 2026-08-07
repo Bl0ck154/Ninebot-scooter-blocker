@@ -17,6 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set build version to 0.7.2
+        run: |
+          sed -i 's/versionCode = 13/versionCode = 14/' app/build.gradle.kts
+          sed -i 's/versionName = "0.7.1"/versionName = "0.7.2"/' app/build.gradle.kts
+
       - name: Decode stable signing keystore
         run: |
           mkdir -p ci
@@ -50,24 +55,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.7.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.7.2.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.7.1-apk
-          path: Ninebot-scooter-blocker-v0.7.1.apk
+          name: Ninebot-scooter-blocker-v0.7.2-apk
+          path: Ninebot-scooter-blocker-v0.7.2.apk
           if-no-files-found: error
 
-      - name: Publish v0.7.1 release APK
+      - name: Publish v0.7.2 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.7.1 >/dev/null 2>&1; then
-            gh release upload v0.7.1 Ninebot-scooter-blocker-v0.7.1.apk --clobber
+          if gh release view v0.7.2 >/dev/null 2>&1; then
+            gh release upload v0.7.2 Ninebot-scooter-blocker-v0.7.2.apk --clobber
           else
-            gh release create v0.7.1 Ninebot-scooter-blocker-v0.7.1.apk \
+            gh release create v0.7.2 Ninebot-scooter-blocker-v0.7.2.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.7.1" \
-              --notes "Stability rollback to the known-good v0.6.0 SHU 2.7 transport. Removes automatic register 0x1D reads that caused post-auth decode failures, makes the lock toggle clickable immediately after authentication with an explicit visible switch style, persists last-known lock state locally, keeps exact 0x70/0x71 lock/unlock writes, and restricts scooter scanning to devices with real advertised NBScooter/Ninebot/Segway names instead of raw BLE heuristics."
+              --title "Ninebot Scooter Blocker v0.7.2" \
+              --notes "Keeps the known-good v0.6.0 SHU transport and fixes the lock UI so connection state no longer disables the toggle. The lock/unlock request can be queued while Bluetooth authentication is still in progress. The card shows only lock state; connection/authentication text is separate below it. Scooter scanning remains restricted to real advertised NBScooter/Ninebot/Segway names."
           fi
