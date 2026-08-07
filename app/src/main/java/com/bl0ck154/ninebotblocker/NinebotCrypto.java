@@ -9,165 +9,201 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Minimal Java implementation of the Ninebot encrypted 5A A5 transport.
- *
- * Counter/state behaviour intentionally follows dnandha/miauth NbCrypto, which is
- * used by ownbee/ninebot-ble. In particular, receiving a packet synchronizes the
- * local counter from the packet trailer; a counter of 0 keeps using the first-message
- * cipher even after BLE data has been learned from INIT.
+ * Port of ScooterHacking Utility 2.7's NinebotCrypto transport (class y6/c).
+ * This intentionally follows SHU's counter and re-keying behaviour rather than
+ * the earlier miauth-derived implementation.
  */
 public final class NinebotCrypto {
     private static final byte[] FW_DATA = hex("97CFB802844143DE56002B3B34780A5D");
 
-    private byte[] name = new byte[0];
-    private byte[] bleData;
-    private byte[] appData;
-    private byte[] shaKey = new byte[16];
+    private final byte[] fwData = Arrays.copyOf(FW_DATA, 16);
+    private final byte[] bleData = new byte[16];
+    private final byte[] appData = new byte[16];
+    private final byte[] shaKey = new byte[16];
+    private final byte[] name;
     private int counter;
 
     public NinebotCrypto(String deviceName) {
-        setName(deviceName);
-    }
-
-    public void setName(String deviceName) {
-        name = (deviceName == null ? "Unnamed" : deviceName).getBytes(StandardCharsets.UTF_8);
-        shaKey = calcSha1Key(name, FW_DATA);
-        bleData = null;
-        appData = null;
-        counter = 0;
-    }
-
-    public void setBleData(byte[] value) {
-        if (value == null || value.length < 16) {
-            throw new IllegalArgumentException("BLE key must contain 16 bytes");
-        }
-        bleData = Arrays.copyOf(value, 16);
-        shaKey = calcSha1Key(name, bleData);
-    }
-
-    public void setAppData(byte[] value) {
-        if (value == null || value.length != 16 || bleData == null) {
-            throw new IllegalArgumentException("App key requires a 16-byte key and BLE key");
-        }
-        appData = Arrays.copyOf(value, 16);
-        shaKey = calcSha1Key(appData, bleData);
+        String n = (deviceName == null || deviceName.isBlank()) ? "NBScooter2020" : deviceName;
+        name = n.getBytes(StandardCharsets.UTF_8);
+        deriveKey(name, fwData);
     }
 
     public int counter() {
         return counter;
     }
 
-    /** Encrypt exactly like miauth.nb.nbcrypto.NbCrypto.encrypt(). */
+    /** SHU y6/c.i(): encrypt a complete 5A A5 plaintext packet. */
     public byte[] encrypt(byte[] plainPacket) {
-        if (plainPacket == null || plainPacket.length < 3) {
-            throw new IllegalArgumentException("Invalid Ninebot packet");
+        if (plainPacket == null || plainPacket.length < 7) {
+            throw new IllegalArgumentException("Invalid Ninebot plaintext packet");
         }
 
         byte[] payload = Arrays.copyOfRange(plainPacket, 3, plainPacket.length);
-        byte[] result = new byte[plainPacket.length + 6];
-        System.arraycopy(plainPacket, 0, result, 0, 3);
+        byte[] temp = new byte[plainPacket.length + 6];
+        System.arraycopy(plainPacket, 0, temp, 0, 3);
 
-        // miauth keeps using the first-message transport while the synchronized
-        // counter is zero. INIT responses on G30 commonly carry 00 00 here.
-        if (counter == 0 || bleData == null) {
-            byte[] encrypted = cryptoFirst(payload);
-            System.arraycopy(encrypted, 0, result, 3, encrypted.length);
-            int p = 3 + encrypted.length;
-            result[p] = 0;
-            result[p + 1] = 0;
+        if (counter == 0) {
             byte[] crc = crcFirst(payload);
-            result[p + 2] = crc[0];
-            result[p + 3] = crc[1];
-            result[p + 4] = 0;
-            result[p + 5] = 0;
-        } else {
-            counter = (counter + 1) & 0xFFFF;
-            if (counter == 0) counter = 1;
+            byte[] encrypted = cryptoFirst(payload);
+            System.arraycopy(encrypted, 0, temp, 3, encrypted.length);
 
-            byte[] encrypted = cryptoNext(payload, counter);
-            System.arraycopy(encrypted, 0, result, 3, encrypted.length);
+            int end = plainPacket.length;
+            temp[end] = 0;
+            temp[end + 1] = 0;
+            temp[end + 2] = crc[0];
+            temp[end + 3] = crc[1];
+            temp[end + 4] = 0;
+            temp[end + 5] = 0;
+
+            // Critical SHU behaviour: first encrypted packet is counter 0 on wire,
+            // but local state advances to 1 immediately afterwards.
+            counter = counter + 1;
+        } else {
+            counter = counter + 1;
             byte[] crc = crcNext(plainPacket, counter);
-            int p = 3 + encrypted.length;
-            System.arraycopy(crc, 0, result, p, 4);
-            result[p + 4] = (byte) ((counter >>> 8) & 0xFF);
-            result[p + 5] = (byte) (counter & 0xFF);
+            byte[] encrypted = cryptoNext(payload, counter);
+            System.arraycopy(encrypted, 0, temp, 3, encrypted.length);
+
+            int end = plainPacket.length;
+            System.arraycopy(crc, 0, temp, end, 4);
+            temp[end + 4] = (byte) ((counter & 0xFF00) >>> 8);
+            temp[end + 5] = (byte) (counter & 0xFF);
         }
-        return result;
+
+        byte[] out = Arrays.copyOf(temp, plainPacket.length + 6);
+
+        // SHU remembers the key from the outgoing 5C packet, but only switches
+        // the SHA/AES key after receiving 21 3E 5C 01.
+        if (plainPacket.length >= 23
+                && (plainPacket[0] & 0xFF) == 0x5A
+                && (plainPacket[1] & 0xFF) == 0xA5
+                && (plainPacket[2] & 0xFF) == 0x10
+                && (plainPacket[3] & 0xFF) == 0x3E
+                && (plainPacket[4] & 0xFF) == 0x21
+                && (plainPacket[5] & 0xFF) == 0x5C
+                && (plainPacket[6] & 0xFF) == 0x00) {
+            System.arraycopy(plainPacket, 7, appData, 0, 16);
+        }
+
+        return out;
     }
 
-    /** Decrypt exactly like miauth NbCrypto: trailer counter is authoritative. */
+    /** SHU y6/c.h(): decrypt a complete encrypted 5A A5 packet. */
     public byte[] decrypt(byte[] encryptedPacket) {
-        if (encryptedPacket == null || encryptedPacket.length < 9) {
-            throw new IllegalArgumentException("Encrypted Ninebot packet is too short");
+        if (encryptedPacket == null || encryptedPacket.length < 13) {
+            throw new IllegalArgumentException("Encrypted Ninebot packet too short");
         }
+
+        byte[] result = new byte[encryptedPacket.length - 6];
+        System.arraycopy(encryptedPacket, 0, result, 0, 3);
+
+        int receivedCounter = (counter & 0xFFFF0000)
+                + (((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
+                | (encryptedPacket[encryptedPacket.length - 1] & 0xFF));
 
         int payloadLength = encryptedPacket.length - 9;
-        byte[] encryptedPayload = Arrays.copyOfRange(encryptedPacket, 3, 3 + payloadLength);
+        byte[] encryptedPayload = new byte[payloadLength];
+        System.arraycopy(encryptedPacket, 3, encryptedPayload, 0, payloadLength);
 
-        counter = ((encryptedPacket[encryptedPacket.length - 2] & 0xFF) << 8)
-                | (encryptedPacket[encryptedPacket.length - 1] & 0xFF);
+        byte[] decrypted = receivedCounter == 0
+                ? cryptoFirst(encryptedPayload)
+                : cryptoNext(encryptedPayload, receivedCounter);
+        System.arraycopy(decrypted, 0, result, 3, decrypted.length);
 
-        byte[] decrypted;
-        if (counter == 0 || bleData == null) {
-            decrypted = cryptoFirst(encryptedPayload);
-        } else {
-            decrypted = cryptoNext(encryptedPayload, counter);
+        // 5B response: 5A A5 1E 21 3E 5B 01 + 16-byte BLE key + 14-byte serial.
+        // SHU re-keys immediately with device name + BLE key, and deliberately
+        // skips the normal counter synchronization for this packet.
+        if (startsWith(result, new int[]{0x5A, 0xA5, 0x1E, 0x21, 0x3E, 0x5B})
+                && result.length >= 23) {
+            System.arraycopy(result, 7, bleData, 0, 16);
+            deriveKey(name, bleData);
+            return result;
         }
 
-        byte[] result = new byte[3 + decrypted.length];
-        System.arraycopy(encryptedPacket, 0, result, 0, 3);
-        System.arraycopy(decrypted, 0, result, 3, decrypted.length);
+        // Accepted 5C response: switch to app-key + BLE-key crypto.
+        if (startsWith(result, new int[]{0x5A, 0xA5, 0x00, 0x21, 0x3E, 0x5C, 0x01})) {
+            deriveKey(appData, bleData);
+        }
+
+        // Exact SHU counter reconciliation.
+        if (Integer.compare(counter, receivedCounter) > 0) {
+            counter = receivedCounter;
+        } else {
+            counter = counter + 1;
+        }
+
         return result;
     }
 
     private byte[] cryptoFirst(byte[] data) {
-        byte[] result = new byte[data.length];
-        byte[] keyStream = aesEcb(FW_DATA, shaKey);
+        byte[] out = new byte[data.length];
+        byte[] keyStream = aesEcbFirstBlock(fwData, shaKey);
         for (int offset = 0; offset < data.length; offset += 16) {
             int n = Math.min(16, data.length - offset);
             for (int i = 0; i < n; i++) {
-                result[offset + i] = (byte) (data[offset + i] ^ keyStream[i]);
+                out[offset + i] = (byte) (data[offset + i] ^ keyStream[i]);
             }
         }
-        return result;
+        return out;
     }
 
     private byte[] cryptoNext(byte[] data, int messageCounter) {
-        byte[] result = new byte[data.length];
-        byte[] aesData = baseCounterBlock(messageCounter);
-        for (int offset = 0, block = 1; offset < data.length; offset += 16, block++) {
-            aesData[15] = (byte) block;
-            byte[] keyStream = aesEcb(aesData, shaKey);
-            int n = Math.min(16, data.length - offset);
+        byte[] out = new byte[data.length];
+        byte[] ctr = counterBlock(messageCounter);
+        ctr[15] = 0;
+
+        int remaining = data.length;
+        int offset = 0;
+        while (remaining > 0) {
+            ctr[15] = (byte) (ctr[15] + 1);
+            int n = Math.min(16, remaining);
+            byte[] keyStream = aesEcbFirstBlock(ctr, shaKey);
             for (int i = 0; i < n; i++) {
-                result[offset + i] = (byte) (data[offset + i] ^ keyStream[i]);
+                out[offset + i] = (byte) (data[offset + i] ^ keyStream[i]);
             }
+            remaining -= n;
+            offset += n;
         }
-        return result;
+        return out;
+    }
+
+    /** SHU sums Java signed bytes here; preserve that quirk exactly. */
+    private static byte[] crcFirst(byte[] data) {
+        long sum = 0;
+        for (byte b : data) sum += b;
+        long crc = ~sum;
+        return new byte[]{
+                (byte) (crc & 0xFF),
+                (byte) ((crc >> 8) & 0xFF)
+        };
     }
 
     private byte[] crcNext(byte[] plainPacket, int messageCounter) {
-        byte[] aesData = baseCounterBlock(messageCounter);
-        aesData[0] = 0x59;
-        aesData[15] = (byte) (plainPacket.length - 3);
+        byte[] state = counterBlock(messageCounter);
+        int remaining = plainPacket.length - 3;
+        state[0] = 0x59;
+        state[15] = (byte) remaining;
 
-        byte[] chain = aesEcb(aesData, shaKey);
+        byte[] chain = aesEcbFirstBlock(state, shaKey);
+
         byte[] block = new byte[16];
         System.arraycopy(plainPacket, 0, block, 0, Math.min(3, plainPacket.length));
-        chain = aesEcb(xor16(block, chain), shaKey);
+        chain = aesEcbFirstBlock(xor16(block, chain), shaKey);
 
         int offset = 3;
-        while (offset < plainPacket.length) {
+        while (remaining > 0) {
+            int n = Math.min(16, remaining);
             block = new byte[16];
-            int n = Math.min(16, plainPacket.length - offset);
             System.arraycopy(plainPacket, offset, block, 0, n);
-            chain = aesEcb(xor16(block, chain), shaKey);
+            chain = aesEcbFirstBlock(xor16(block, chain), shaKey);
+            remaining -= n;
             offset += n;
         }
 
-        aesData[0] = 0x01;
-        aesData[15] = 0;
-        byte[] tail = aesEcb(aesData, shaKey);
+        state[0] = 0x01;
+        state[15] = 0;
+        byte[] tail = aesEcbFirstBlock(state, shaKey);
         return new byte[]{
                 (byte) (tail[0] ^ chain[0]),
                 (byte) (tail[1] ^ chain[1]),
@@ -176,42 +212,38 @@ public final class NinebotCrypto {
         };
     }
 
-    private byte[] baseCounterBlock(int messageCounter) {
-        if (bleData == null) throw new IllegalStateException("BLE key is not initialized");
-        byte[] data = new byte[16];
-        data[0] = 0x01;
-        data[1] = (byte) ((messageCounter >>> 24) & 0xFF);
-        data[2] = (byte) ((messageCounter >>> 16) & 0xFF);
-        data[3] = (byte) ((messageCounter >>> 8) & 0xFF);
-        data[4] = (byte) (messageCounter & 0xFF);
-        System.arraycopy(bleData, 0, data, 5, 8);
-        return data;
+    private byte[] counterBlock(int messageCounter) {
+        byte[] block = new byte[16];
+        block[0] = 0x01;
+        block[1] = (byte) ((messageCounter >>> 24) & 0xFF);
+        block[2] = (byte) ((messageCounter >>> 16) & 0xFF);
+        block[3] = (byte) ((messageCounter >>> 8) & 0xFF);
+        block[4] = (byte) (messageCounter & 0xFF);
+        System.arraycopy(bleData, 0, block, 5, 8);
+        return block;
     }
 
-    /** Python bytearray sum is unsigned; do not sum Java signed bytes here. */
-    private static byte[] crcFirst(byte[] data) {
-        long sum = 0;
-        for (byte b : data) sum += (b & 0xFF);
-        long crc = (~sum) & 0xFFFF;
-        return new byte[]{(byte) (crc & 0xFF), (byte) ((crc >>> 8) & 0xFF)};
-    }
-
-    private static byte[] calcSha1Key(byte[] first, byte[] second) {
+    private void deriveKey(byte[] first, byte[] second) {
         try {
             byte[] input = new byte[32];
-            System.arraycopy(first, 0, input, 0, Math.min(16, first.length));
-            System.arraycopy(second, 0, input, 16, Math.min(16, second.length));
-            return Arrays.copyOf(MessageDigest.getInstance("SHA-1").digest(input), 16);
+            if (first != null) {
+                System.arraycopy(first, 0, input, 0, Math.min(first.length, input.length));
+            }
+            if (second != null) {
+                System.arraycopy(second, 0, input, 16, Math.min(16, second.length));
+            }
+            byte[] digest = MessageDigest.getInstance("SHA-1").digest(input);
+            System.arraycopy(digest, 0, shaKey, 0, 16);
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("SHA-1 unavailable", e);
         }
     }
 
-    private static byte[] aesEcb(byte[] block, byte[] key) {
+    private static byte[] aesEcbFirstBlock(byte[] block, byte[] key) {
         try {
             Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"));
-            return cipher.doFinal(block);
+            return cipher.doFinal(Arrays.copyOf(block, 16));
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("AES unavailable", e);
         }
@@ -221,6 +253,14 @@ public final class NinebotCrypto {
         byte[] out = new byte[16];
         for (int i = 0; i < 16; i++) out[i] = (byte) (a[i] ^ b[i]);
         return out;
+    }
+
+    private static boolean startsWith(byte[] data, int[] prefix) {
+        if (data == null || data.length < prefix.length) return false;
+        for (int i = 0; i < prefix.length; i++) {
+            if ((data[i] & 0xFF) != prefix[i]) return false;
+        }
+        return true;
     }
 
     private static byte[] hex(String value) {
