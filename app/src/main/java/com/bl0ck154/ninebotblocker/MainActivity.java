@@ -39,7 +39,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 
-/** Stable one-favorite-scooter UI on top of the v0.6.0 transport. */
+/**
+ * Clean one-favorite-scooter UI on top of the known-good v0.6.0 transport.
+ * Connection/authentication state never disables the user's lock control:
+ * actions can be queued while the scooter is connecting, just like v0.6.0.
+ */
 public final class MainActivity extends Activity {
     private static final int REQ_PERMISSIONS = 42;
     private static final String PREFS = "ninebot_quick_lock";
@@ -73,7 +77,6 @@ public final class MainActivity extends Activity {
     private boolean scanMode;
     private boolean connecting;
     private boolean suppressSwitchCallback;
-    private boolean authenticated;
     private Boolean lastLockState;
 
     @Override
@@ -126,15 +129,14 @@ public final class MainActivity extends Activity {
         stateText.setTextSize(22);
         stateText.setTextColor(Color.rgb(25, 25, 25));
         stateText.setText("State unknown");
-        LinearLayout.LayoutParams stateParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        LinearLayout.LayoutParams stateParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         toggleCard.addView(stateText, stateParams);
 
         lockSwitch = new Switch(this);
         lockSwitch.setText("");
         lockSwitch.setShowText(false);
         lockSwitch.setSwitchMinWidth(dp(66));
-        lockSwitch.setEnabled(false);
         applySwitchColors();
         lockSwitch.setOnCheckedChangeListener((button, checked) -> {
             if (suppressSwitchCallback) return;
@@ -200,6 +202,10 @@ public final class MainActivity extends Activity {
         return p;
     }
 
+    private boolean hasFavorite() {
+        return prefs.getString(PREF_ADDRESS, null) != null;
+    }
+
     private void refreshBoundDevice() {
         String address = prefs.getString(PREF_ADDRESS, null);
         String name = prefs.getString(PREF_NAME, null);
@@ -207,28 +213,33 @@ public final class MainActivity extends Activity {
             deviceText.setText("No scooter selected");
             addressText.setText("");
             shortcutButton.setEnabled(false);
-            setToggleDisplay(null, false);
+            renderState(null);
+            setControlAvailable(false);
             status("Select a scooter", true);
         } else {
             deviceText.setText(name == null || name.isBlank() ? "Ninebot" : name);
             addressText.setText(address);
             shortcutButton.setEnabled(true);
-            setToggleDisplay(lastLockState, authenticated);
+            renderState(lastLockState);
+            setControlAvailable(true);
         }
     }
 
-    private void setToggleDisplay(Boolean locked, boolean enabled) {
+    private void renderState(Boolean locked) {
         suppressSwitchCallback = true;
         if (locked == null) {
             lockSwitch.setChecked(false);
-            stateText.setText(enabled ? "State unknown" : "Connecting…");
+            stateText.setText("State unknown");
         } else {
             lockSwitch.setChecked(locked);
             stateText.setText(locked ? "Locked" : "Unlocked");
         }
-        lockSwitch.setEnabled(enabled);
-        toggleCard.setAlpha(enabled ? 1f : 0.72f);
         suppressSwitchCallback = false;
+    }
+
+    private void setControlAvailable(boolean available) {
+        lockSwitch.setEnabled(available);
+        toggleCard.setAlpha(available ? 1f : 0.55f);
     }
 
     private void saveKnownState(boolean locked) {
@@ -237,7 +248,8 @@ public final class MainActivity extends Activity {
                 .putBoolean(PREF_LOCK_KNOWN, true)
                 .putBoolean(PREF_LOCK_STATE, locked)
                 .apply();
-        setToggleDisplay(locked, authenticated);
+        renderState(locked);
+        setControlAvailable(hasFavorite());
     }
 
     private void clearKnownState() {
@@ -275,46 +287,45 @@ public final class MainActivity extends Activity {
     }
 
     private void autoConnectIfPossible() {
-        if (scanMode || scanning) return;
-        String address = prefs.getString(PREF_ADDRESS, null);
-        if (address == null) return;
+        if (scanMode || scanning || !hasFavorite()) return;
+        setControlAvailable(true);
         if (!hasBlePermissions()) {
             requestBlePermissions();
             return;
         }
         if (adapter == null || !adapter.isEnabled()) {
-            authenticated = false;
-            setToggleDisplay(lastLockState, false);
             status("Turn Bluetooth on", false);
             return;
         }
         if (!connecting && (client == null || !client.isReady())) {
             connectBoundScooter(null);
         } else if (client != null && client.isReady()) {
-            authenticated = true;
-            setToggleDisplay(lastLockState, true);
+            status("Connected", true);
         }
     }
 
     private void requestDesiredState(boolean locked) {
+        if (!hasFavorite()) {
+            renderState(lastLockState);
+            beginScan();
+            return;
+        }
         if (!hasBlePermissions()) {
-            setToggleDisplay(lastLockState, authenticated);
+            renderState(lastLockState);
             requestBlePermissions();
             return;
         }
         if (adapter == null || !adapter.isEnabled()) {
-            setToggleDisplay(lastLockState, authenticated);
+            renderState(lastLockState);
             status("Turn Bluetooth on first", false);
             return;
         }
-        if (prefs.getString(PREF_ADDRESS, null) == null) {
-            setToggleDisplay(lastLockState, false);
-            beginScan();
-            return;
-        }
 
-        lockSwitch.setEnabled(false);
-        status(locked ? "Locking…" : "Unlocking…", true);
+        // Do not disable the switch while connecting. The v0.6 transport can queue
+        // the requested state and execute it as soon as authentication completes.
+        stateText.setText(locked ? "Locking…" : "Unlocking…");
+        status(connecting ? "Command queued while connecting…" : (locked ? "Locking…" : "Unlocking…"), true);
+
         if (client != null && (connecting || client.isReady())) {
             client.setLockedWhenReady(locked);
         } else {
@@ -332,8 +343,7 @@ public final class MainActivity extends Activity {
             BluetoothDevice device = adapter.getRemoteDevice(address);
             if (client != null) client.closeSilently();
             connecting = true;
-            authenticated = false;
-            setToggleDisplay(lastLockState, false);
+            setControlAvailable(true);
             client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
                 @Override public void onStatus(String text) {
                     status(text, true);
@@ -341,8 +351,10 @@ public final class MainActivity extends Activity {
 
                 @Override public void onReady() {
                     connecting = false;
-                    authenticated = true;
-                    setToggleDisplay(lastLockState, true);
+                    setControlAvailable(true);
+                    if (stateText.getText().toString().equals("State unknown")) {
+                        renderState(lastLockState);
+                    }
                     status("Connected", true);
                 }
 
@@ -351,15 +363,16 @@ public final class MainActivity extends Activity {
                     if (success && locked != null) {
                         saveKnownState(locked);
                     } else {
-                        setToggleDisplay(lastLockState, authenticated);
+                        renderState(lastLockState);
+                        setControlAvailable(true);
                     }
                     status(message, success);
                 }
 
                 @Override public void onDisconnected(String reason) {
                     connecting = false;
-                    authenticated = false;
-                    setToggleDisplay(lastLockState, false);
+                    renderState(lastLockState);
+                    setControlAvailable(hasFavorite());
                     status(reason, false);
                 }
             });
@@ -367,14 +380,14 @@ public final class MainActivity extends Activity {
             if (desiredState != null) client.setLockedWhenReady(desiredState);
         } catch (IllegalArgumentException e) {
             connecting = false;
-            authenticated = false;
-            setToggleDisplay(lastLockState, false);
+            renderState(lastLockState);
+            setControlAvailable(hasFavorite());
             status("Saved scooter address is invalid. Select it again.", false);
         }
     }
 
     private void requestHomeShortcut() {
-        if (prefs.getString(PREF_ADDRESS, null) == null) {
+        if (!hasFavorite()) {
             Toast.makeText(this, "Select a scooter first.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -418,8 +431,6 @@ public final class MainActivity extends Activity {
 
         scanMode = true;
         connecting = false;
-        authenticated = false;
-        setToggleDisplay(lastLockState, false);
         if (client != null) {
             client.closeSilently();
             client = null;
@@ -479,9 +490,11 @@ public final class MainActivity extends Activity {
         @Override public void onScanResult(int callbackType, ScanResult result) {
             handleScanResult(result);
         }
+
         @Override public void onBatchScanResults(List<ScanResult> results) {
             if (results != null) for (ScanResult r : results) handleScanResult(r);
         }
+
         @Override public void onScanFailed(int errorCode) {
             main.post(() -> status("Bluetooth scan failed.", false));
         }
