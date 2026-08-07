@@ -35,7 +35,7 @@ public final class NinebotBleClient {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final Context context;
-    private final Listener listener;
+    private Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<byte[]> writeQueue = new ArrayDeque<>();
     private final ByteArrayOutputStream receiveBuffer = new ByteArrayOutputStream();
@@ -78,8 +78,6 @@ public final class NinebotBleClient {
                     : "SHU auth: 5C…");
             sendEncrypted(ShuNinebotProtocol.pingPacket());
 
-            // SHU sends one early 5D after the first 5C attempt, then keeps
-            // polling 5C until it gets index=1.
             if (!firstPairTriggerSent && serial != null) {
                 firstPairTriggerSent = true;
                 main.postDelayed(() -> {
