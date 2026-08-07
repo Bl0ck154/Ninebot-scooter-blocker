@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.1.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.5.0-apk
-          path: Ninebot-scooter-blocker-v0.5.0.apk
+          name: Ninebot-scooter-blocker-v0.5.1-apk
+          path: Ninebot-scooter-blocker-v0.5.1.apk
           if-no-files-found: error
 
-      - name: Publish v0.5.0 release APK
+      - name: Publish v0.5.1 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.5.0 >/dev/null 2>&1; then
-            gh release upload v0.5.0 Ninebot-scooter-blocker-v0.5.0.apk --clobber
+          if gh release view v0.5.1 >/dev/null 2>&1; then
+            gh release upload v0.5.1 Ninebot-scooter-blocker-v0.5.1.apk --clobber
           else
-            gh release create v0.5.0 Ninebot-scooter-blocker-v0.5.0.apk \
+            gh release create v0.5.1 Ninebot-scooter-blocker-v0.5.1.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.5.0" \
-              --notes "Reimplements the classic Ninebot G30 lock path from ScooterHacking Utility 2.7. Removes the incorrect INIT/PING/PAIR flow and sends SHU's exact classic lock frame: 5A A5 01 3E 20 32 70 01 FD FE over Nordic UART."
+              --title "Ninebot Scooter Blocker v0.5.1" \
+              --notes "Diagnostic build: fixes Android BLE discovery by reading ScanRecord names and no longer dropping unnamed devices; uses low-latency unfiltered scan; adds scrollable/copyable logs with scan advertising bytes, GATT services, TX/RX and exact SHU lock frame. Protocol command itself is unchanged from v0.5.0."
           fi
