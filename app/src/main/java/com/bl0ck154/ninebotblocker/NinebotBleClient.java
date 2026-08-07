@@ -19,7 +19,7 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.UUID;
 
-/** One-scooter authenticated Ninebot BLE client. */
+/** One-scooter Ninebot BLE client with legacy-first protocol auto-detection. */
 public final class NinebotBleClient {
     public interface Listener {
         void onStatus(String status);
@@ -27,6 +27,8 @@ public final class NinebotBleClient {
         void onDisconnected(String reason);
         void onLockResult(boolean success, String message);
     }
+
+    private enum ProtocolMode { DETECTING, LEGACY_55AA, MODERN_5AA5 }
 
     private static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID UART_RX = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
@@ -40,7 +42,8 @@ public final class NinebotBleClient {
     private Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<byte[]> writeQueue = new ArrayDeque<>();
-    private final ByteArrayOutputStream receiveBuffer = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream modernReceiveBuffer = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream legacyReceiveBuffer = new ByteArrayOutputStream();
 
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic rx;
@@ -49,6 +52,7 @@ public final class NinebotBleClient {
     private byte[] serial;
     private String address;
     private String deviceName;
+    private ProtocolMode mode = ProtocolMode.DETECTING;
     private boolean cancelled;
     private boolean ready;
     private boolean writeInFlight;
@@ -58,13 +62,19 @@ public final class NinebotBleClient {
 
     private final Runnable connectionTimeout = () -> {
         if (!cancelled && !ready) {
-            failConnection("Authentication timed out. Keep the scooter on and close other scooter apps.");
+            failConnection("Connection/protocol detection timed out. Keep the scooter on and close other scooter apps.");
+        }
+    };
+
+    private final Runnable protocolProbeTimeout = () -> {
+        if (!cancelled && !ready && mode == ProtocolMode.DETECTING) {
+            startModernAuthentication();
         }
     };
 
     private final Runnable pairRetry = new Runnable() {
         @Override public void run() {
-            if (cancelled || ready || !pairLoop || serial == null) return;
+            if (cancelled || ready || !pairLoop || serial == null || mode != ProtocolMode.MODERN_5AA5) return;
             sendEncrypted(NinebotProtocol.pairPacket(serial));
             main.postDelayed(this, 1100);
         }
@@ -73,8 +83,13 @@ public final class NinebotBleClient {
     private final Runnable lockTimeout = () -> {
         if (!cancelled && lockInFlight) {
             lockInFlight = false;
-            listener.onLockResult(false,
-                    "Authenticated, but the controller did not acknowledge LOCK. Try once more and send this exact message if it repeats.");
+            if (mode == ProtocolMode.LEGACY_55AA) {
+                listener.onLockResult(false,
+                        "Legacy LOCK was sent, but the lock-state read did not confirm it. Check whether the wheel is electronically braked.");
+            } else {
+                listener.onLockResult(false,
+                        "Authenticated, but the controller did not acknowledge LOCK. Try once more and send this exact message if it repeats.");
+            }
         }
     };
 
@@ -95,8 +110,10 @@ public final class NinebotBleClient {
         pendingLock = false;
         lockInFlight = false;
         pairLoop = false;
+        mode = ProtocolMode.DETECTING;
         writeQueue.clear();
-        receiveBuffer.reset();
+        modernReceiveBuffer.reset();
+        legacyReceiveBuffer.reset();
 
         address = device.getAddress();
         deviceName = preferredName;
@@ -108,16 +125,16 @@ public final class NinebotBleClient {
 
         status("Connecting directly to " + deviceName + "…");
         main.removeCallbacks(connectionTimeout);
-        main.postDelayed(connectionTimeout, 18000);
+        main.postDelayed(connectionTimeout, 20000);
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
     }
 
-    /** If not ready yet, remember the click and lock immediately after authentication. */
+    /** If not ready yet, remember the click and lock immediately after protocol detection/auth. */
     public void lockWhenReady() {
         if (cancelled) return;
         if (!ready) {
             pendingLock = true;
-            status("LOCK queued — authenticating scooter first…");
+            status("LOCK queued — connecting to scooter first…");
             return;
         }
         sendLock();
@@ -137,8 +154,10 @@ public final class NinebotBleClient {
         pendingLock = false;
         writeInFlight = false;
         writeQueue.clear();
-        receiveBuffer.reset();
+        modernReceiveBuffer.reset();
+        legacyReceiveBuffer.reset();
         main.removeCallbacks(connectionTimeout);
+        main.removeCallbacks(protocolProbeTimeout);
         main.removeCallbacks(pairRetry);
         main.removeCallbacks(lockTimeout);
         if (gatt != null) {
@@ -191,7 +210,7 @@ public final class NinebotBleClient {
                 return;
             }
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            status("UART ready. Enabling encrypted responses…");
+            status("UART ready. Enabling responses…");
             if (!g.writeDescriptor(cccd)) {
                 failConnection("Could not subscribe to Ninebot responses.");
             }
@@ -204,15 +223,35 @@ public final class NinebotBleClient {
                 failConnection("Notification setup failed (GATT " + statusCode + ").");
                 return;
             }
-            status("Authenticating: INIT…");
-            sendEncrypted(NinebotProtocol.initPacket());
+
+            mode = ProtocolMode.DETECTING;
+            status("Detecting Ninebot protocol: trying legacy 55AA first…");
+            sendRaw(LegacyNinebotProtocol.readFirmwarePacket());
+            main.postDelayed(() -> {
+                if (!cancelled && !ready && mode == ProtocolMode.DETECTING) {
+                    sendRaw(LegacyNinebotProtocol.readLockStatePacket());
+                }
+            }, 150);
+            main.removeCallbacks(protocolProbeTimeout);
+            main.postDelayed(protocolProbeTimeout, 1100);
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
             if (cancelled || g != gatt) return;
             byte[] value = characteristic.getValue();
-            if (value != null && value.length > 0) handleEncryptedFragment(value);
+            if (value == null || value.length == 0) return;
+
+            boolean legacyHeader = value.length >= 2
+                    && (value[0] & 0xFF) == 0x55 && (value[1] & 0xFF) == 0xAA;
+            boolean modernHeader = value.length >= 2
+                    && (value[0] & 0xFF) == 0x5A && (value[1] & 0xFF) == 0xA5;
+
+            if (legacyHeader || mode == ProtocolMode.LEGACY_55AA || legacyReceiveBuffer.size() > 0) {
+                handleLegacyFragment(value);
+            } else if (modernHeader || mode == ProtocolMode.MODERN_5AA5 || modernReceiveBuffer.size() > 0) {
+                handleEncryptedFragment(value);
+            }
         }
 
         @Override
@@ -227,13 +266,62 @@ public final class NinebotBleClient {
         }
     };
 
+    private void handleLegacyFragment(byte[] fragment) {
+        try {
+            if (fragment.length >= 2 && (fragment[0] & 0xFF) == 0x55 && (fragment[1] & 0xFF) == 0xAA) {
+                legacyReceiveBuffer.reset();
+            }
+            legacyReceiveBuffer.write(fragment, 0, fragment.length);
+            byte[] accumulated = legacyReceiveBuffer.toByteArray();
+            if (accumulated.length < 3) return;
+
+            int expectedLength = (accumulated[2] & 0xFF) + 6;
+            if (accumulated.length < expectedLength) return;
+            if (accumulated.length > expectedLength) accumulated = Arrays.copyOf(accumulated, expectedLength);
+            legacyReceiveBuffer.reset();
+
+            if (!LegacyNinebotProtocol.isPacket(accumulated)) {
+                status("Ignored malformed legacy Ninebot response.");
+                return;
+            }
+
+            if (mode == ProtocolMode.DETECTING) {
+                mode = ProtocolMode.LEGACY_55AA;
+                main.removeCallbacks(protocolProbeTimeout);
+                markReady("Legacy 55AA protocol detected. Ready to lock.");
+            }
+
+            if (mode != ProtocolMode.LEGACY_55AA) return;
+            int command = LegacyNinebotProtocol.command(accumulated);
+            if (command == LegacyNinebotProtocol.REG_LOCK_STATE && lockInFlight) {
+                main.removeCallbacks(lockTimeout);
+                lockInFlight = false;
+                if (LegacyNinebotProtocol.lockState(accumulated)) {
+                    listener.onLockResult(true, "LOCKED — legacy lock-state bit is ON.");
+                } else {
+                    listener.onLockResult(false, "Controller replied, but lock-state is OFF. The legacy LOCK command was not accepted.");
+                }
+            }
+        } catch (Exception e) {
+            status("Legacy response parse error: " + e.getMessage());
+        }
+    }
+
+    private void startModernAuthentication() {
+        if (cancelled || ready || mode != ProtocolMode.DETECTING) return;
+        mode = ProtocolMode.MODERN_5AA5;
+        modernReceiveBuffer.reset();
+        status("Legacy 55AA did not answer. Trying encrypted Ninebot authentication: INIT…");
+        sendEncrypted(NinebotProtocol.initPacket());
+    }
+
     private void handleEncryptedFragment(byte[] fragment) {
         try {
             if (fragment.length >= 2 && (fragment[0] & 0xFF) == 0x5A && (fragment[1] & 0xFF) == 0xA5) {
-                receiveBuffer.reset();
+                modernReceiveBuffer.reset();
             }
-            receiveBuffer.write(fragment, 0, fragment.length);
-            byte[] accumulated = receiveBuffer.toByteArray();
+            modernReceiveBuffer.write(fragment, 0, fragment.length);
+            byte[] accumulated = modernReceiveBuffer.toByteArray();
             if (accumulated.length < 3) return;
 
             int expectedEncryptedLength = (accumulated[2] & 0xFF) + 13;
@@ -241,20 +329,20 @@ public final class NinebotBleClient {
             if (accumulated.length > expectedEncryptedLength) {
                 accumulated = Arrays.copyOf(accumulated, expectedEncryptedLength);
             }
-            receiveBuffer.reset();
+            modernReceiveBuffer.reset();
 
             byte[] plain = crypto.decrypt(accumulated);
             if (!NinebotProtocol.isPacket(plain)) {
-                status("Ignored malformed Ninebot response.");
+                status("Ignored malformed encrypted Ninebot response.");
                 return;
             }
-            handlePacket(plain);
+            handleModernPacket(plain);
         } catch (Exception e) {
             failConnection("Could not decrypt Ninebot response: " + e.getMessage());
         }
     }
 
-    private void handlePacket(byte[] packet) {
+    private void handleModernPacket(byte[] packet) {
         int command = NinebotProtocol.command(packet);
         int index = NinebotProtocol.index(packet);
         byte[] payload = NinebotProtocol.payload(packet);
@@ -266,7 +354,7 @@ public final class NinebotBleClient {
             }
             crypto.setBleData(Arrays.copyOfRange(payload, 0, 16));
             serial = Arrays.copyOfRange(payload, 16, payload.length);
-            status("Authenticating: PING…");
+            status("Encrypted protocol: PING…");
             sendEncrypted(NinebotProtocol.pingPacket(appKey));
             return;
         }
@@ -290,22 +378,23 @@ public final class NinebotBleClient {
         if (command == NinebotProtocol.CMD_PAIR && index == 1) {
             pairLoop = false;
             main.removeCallbacks(pairRetry);
-            markReady();
+            markReady("Encrypted protocol authenticated. Ready to lock.");
             return;
         }
 
         if (NinebotProtocol.isPositiveWriteAck(packet, NinebotProtocol.REG_LOCK)) {
             main.removeCallbacks(lockTimeout);
             lockInFlight = false;
-            listener.onLockResult(true, "LOCKED — controller acknowledged NB_CTL_LOCK.");
+            listener.onLockResult(true, "LOCKED — controller acknowledged encrypted NB_CTL_LOCK.");
         }
     }
 
-    private void markReady() {
+    private void markReady(String message) {
         if (ready) return;
         ready = true;
         main.removeCallbacks(connectionTimeout);
-        status("Connected + authenticated. Ready to lock.");
+        main.removeCallbacks(protocolProbeTimeout);
+        status(message);
         listener.onReady();
         if (pendingLock) {
             pendingLock = false;
@@ -315,6 +404,28 @@ public final class NinebotBleClient {
 
     private void sendLock() {
         if (!ready || lockInFlight) return;
+        if (mode == ProtocolMode.LEGACY_55AA) {
+            sendLegacyLock();
+        } else if (mode == ProtocolMode.MODERN_5AA5) {
+            sendModernLock();
+        }
+    }
+
+    private void sendLegacyLock() {
+        lockInFlight = true;
+        status("Sending legacy LOCK: 55AA / register 0x70 = 1…");
+        sendRaw(LegacyNinebotProtocol.lockPacket());
+        main.postDelayed(() -> {
+            if (!cancelled && lockInFlight && mode == ProtocolMode.LEGACY_55AA) {
+                status("Legacy LOCK sent. Reading lock state…");
+                sendRaw(LegacyNinebotProtocol.readLockStatePacket());
+            }
+        }, 350);
+        main.removeCallbacks(lockTimeout);
+        main.postDelayed(lockTimeout, 2500);
+    }
+
+    private void sendModernLock() {
         lockInFlight = true;
         status("Sending authenticated LOCK (0x70 = 1)…");
         sendEncrypted(NinebotProtocol.lockPacket());
@@ -324,10 +435,14 @@ public final class NinebotBleClient {
 
     private void sendEncrypted(byte[] plainPacket) {
         if (cancelled || crypto == null || rx == null) return;
-        byte[] encrypted = crypto.encrypt(plainPacket);
-        for (int offset = 0; offset < encrypted.length; offset += 20) {
-            int n = Math.min(20, encrypted.length - offset);
-            writeQueue.add(Arrays.copyOfRange(encrypted, offset, offset + n));
+        sendRaw(crypto.encrypt(plainPacket));
+    }
+
+    private void sendRaw(byte[] packet) {
+        if (cancelled || packet == null || rx == null) return;
+        for (int offset = 0; offset < packet.length; offset += 20) {
+            int n = Math.min(20, packet.length - offset);
+            writeQueue.add(Arrays.copyOfRange(packet, offset, offset + n));
         }
         writeNextChunk();
     }
