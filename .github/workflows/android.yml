@@ -34,6 +34,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Test Ninebot protocol
+        run: gradle --no-daemon :app:testDebugUnitTest
+
       - name: Build debug-signed APK
         run: gradle --no-daemon :app:assembleDebug
 
