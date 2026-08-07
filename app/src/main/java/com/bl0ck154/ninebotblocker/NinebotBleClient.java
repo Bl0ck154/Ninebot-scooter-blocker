@@ -34,7 +34,7 @@ public final class NinebotBleClient {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final Context context;
-    private final Listener listener;
+    private Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<byte[]> writeQueue = new ArrayDeque<>();
     private final ByteArrayOutputStream receiveBuffer = new ByteArrayOutputStream();
