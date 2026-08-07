@@ -50,24 +50,24 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.5.2.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.5.1-apk
-          path: Ninebot-scooter-blocker-v0.5.1.apk
+          name: Ninebot-scooter-blocker-v0.5.2-apk
+          path: Ninebot-scooter-blocker-v0.5.2.apk
           if-no-files-found: error
 
-      - name: Publish v0.5.1 release APK
+      - name: Publish v0.5.2 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.5.1 >/dev/null 2>&1; then
-            gh release upload v0.5.1 Ninebot-scooter-blocker-v0.5.1.apk --clobber
+          if gh release view v0.5.2 >/dev/null 2>&1; then
+            gh release upload v0.5.2 Ninebot-scooter-blocker-v0.5.2.apk --clobber
           else
-            gh release create v0.5.1 Ninebot-scooter-blocker-v0.5.1.apk \
+            gh release create v0.5.2 Ninebot-scooter-blocker-v0.5.2.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.5.1" \
-              --notes "Diagnostic build: fixes Android BLE discovery by reading ScanRecord names and no longer dropping unnamed devices; uses low-latency unfiltered scan; adds scrollable/copyable logs with scan advertising bytes, GATT services, TX/RX and exact SHU lock frame. Protocol command itself is unchanged from v0.5.0."
+              --title "Ninebot Scooter Blocker v0.5.2" \
+              --notes "Diagnostic scan fix: Select/change scooter now closes the active GATT connection, suppresses auto-reconnect while scanning, waits briefly for the G30 to resume advertising, then starts an unfiltered low-latency BLE scan and logs the target advertising bytes. Lock command remains unchanged for this diagnostic step."
           fi
