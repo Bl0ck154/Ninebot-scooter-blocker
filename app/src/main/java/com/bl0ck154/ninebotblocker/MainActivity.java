@@ -13,9 +13,13 @@ import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
 import android.graphics.Color;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,19 +28,22 @@ import android.view.Gravity;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 
-/** Minimal one-scooter UI. Diagnostic BLE dumping is intentionally gone. */
+/** Clean one-favorite-scooter UI. */
 public final class MainActivity extends Activity {
     private static final int REQ_PERMISSIONS = 42;
     private static final String PREFS = "ninebot_quick_lock";
     private static final String PREF_ADDRESS = "address";
     private static final String PREF_NAME = "name";
+    private static final String SHORTCUT_ID = "toggle_scooter_lock";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LinkedHashMap<String, ScanResult> scooterResults = new LinkedHashMap<>();
@@ -47,16 +54,20 @@ public final class MainActivity extends Activity {
     private BluetoothLeScanner scanner;
     private SharedPreferences prefs;
     private TextView deviceText;
+    private TextView addressText;
     private TextView statusText;
-    private Button lockButton;
+    private Switch lockSwitch;
     private Button selectButton;
+    private Button shortcutButton;
     private NinebotBleClient client;
     private AlertDialog scanDialog;
     private ArrayAdapter<String> scanAdapter;
+
     private boolean scanning;
     private boolean scanMode;
     private boolean connecting;
-    private boolean lockPending;
+    private boolean suppressSwitchCallback;
+    private Boolean lastLockState;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -73,45 +84,55 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(dp(24), dp(42), dp(24), dp(24));
-        root.setBackgroundColor(Color.rgb(245, 245, 245));
+        root.setPadding(dp(24), dp(44), dp(24), dp(28));
+        root.setBackgroundColor(Color.rgb(247, 247, 247));
 
         TextView title = new TextView(this);
         title.setText("Ninebot Quick Lock");
         title.setTextSize(28);
         title.setTextColor(Color.rgb(20, 20, 20));
         title.setGravity(Gravity.CENTER);
-        root.addView(title, matchWrap(dp(4)));
-
-        TextView version = new TextView(this);
-        version.setText("v0.6.0 • SHU 2.7 NinebotCrypto");
-        version.setTextSize(12);
-        version.setTextColor(Color.GRAY);
-        version.setGravity(Gravity.CENTER);
-        root.addView(version, matchWrap(dp(20)));
+        root.addView(title, matchWrap(dp(26)));
 
         deviceText = new TextView(this);
-        deviceText.setTextSize(15);
-        deviceText.setTextColor(Color.DKGRAY);
+        deviceText.setTextSize(19);
+        deviceText.setTextColor(Color.rgb(35, 35, 35));
         deviceText.setGravity(Gravity.CENTER);
-        root.addView(deviceText, matchWrap(dp(24)));
+        root.addView(deviceText, matchWrap(dp(2)));
 
-        lockButton = new Button(this);
-        lockButton.setText("🔒  LOCK SCOOTER");
-        lockButton.setTextSize(21);
-        lockButton.setAllCaps(false);
-        lockButton.setMinHeight(dp(78));
-        lockButton.setOnClickListener(v -> lockBoundScooter());
-        LinearLayout.LayoutParams lockParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(88));
-        lockParams.setMargins(0, 0, 0, dp(18));
-        root.addView(lockButton, lockParams);
+        addressText = new TextView(this);
+        addressText.setTextSize(12);
+        addressText.setTextColor(Color.GRAY);
+        addressText.setGravity(Gravity.CENTER);
+        root.addView(addressText, matchWrap(dp(28)));
+
+        lockSwitch = new Switch(this);
+        lockSwitch.setText("Lock status");
+        lockSwitch.setTextSize(22);
+        lockSwitch.setTextColor(Color.rgb(25, 25, 25));
+        lockSwitch.setGravity(Gravity.CENTER_VERTICAL);
+        lockSwitch.setPadding(dp(18), 0, dp(18), 0);
+        lockSwitch.setEnabled(false);
+        lockSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (suppressSwitchCallback) return;
+            requestDesiredState(checked);
+        });
+        LinearLayout.LayoutParams switchParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(82));
+        switchParams.setMargins(0, 0, 0, dp(18));
+        root.addView(lockSwitch, switchParams);
 
         selectButton = new Button(this);
-        selectButton.setText("Select / change scooter");
+        selectButton.setText("Change scooter");
         selectButton.setAllCaps(false);
         selectButton.setOnClickListener(v -> beginScan());
-        root.addView(selectButton, matchWrap(dp(24)));
+        root.addView(selectButton, matchWrap(dp(10)));
+
+        shortcutButton = new Button(this);
+        shortcutButton.setText("Add home shortcut");
+        shortcutButton.setAllCaps(false);
+        shortcutButton.setOnClickListener(v -> requestHomeShortcut());
+        root.addView(shortcutButton, matchWrap(dp(24)));
 
         statusText = new TextView(this);
         statusText.setTextSize(14);
@@ -136,11 +157,32 @@ public final class MainActivity extends Activity {
         String name = prefs.getString(PREF_NAME, null);
         if (address == null) {
             deviceText.setText("No scooter selected");
-            lockButton.setEnabled(false);
+            addressText.setText("");
+            setSwitchUnknown();
+            shortcutButton.setEnabled(false);
+            status("Select your scooter once. It will stay the favorite.", true);
         } else {
-            deviceText.setText((name == null || name.isBlank() ? "Ninebot" : name) + "\n" + address);
-            lockButton.setEnabled(true);
+            deviceText.setText(name == null || name.isBlank() ? "Ninebot" : name);
+            addressText.setText(address);
+            shortcutButton.setEnabled(true);
+            if (lastLockState == null) setSwitchUnknown();
         }
+    }
+
+    private void setSwitchUnknown() {
+        suppressSwitchCallback = true;
+        lockSwitch.setEnabled(false);
+        lockSwitch.setText("Checking lock status…");
+        suppressSwitchCallback = false;
+    }
+
+    private void setSwitchState(boolean locked) {
+        lastLockState = locked;
+        suppressSwitchCallback = true;
+        lockSwitch.setChecked(locked);
+        lockSwitch.setText(locked ? "Locked" : "Unlocked");
+        lockSwitch.setEnabled(true);
+        suppressSwitchCallback = false;
     }
 
     private boolean hasBlePermissions() {
@@ -181,38 +223,49 @@ public final class MainActivity extends Activity {
             return;
         }
         if (adapter == null || !adapter.isEnabled()) {
+            setSwitchUnknown();
             status("Turn Bluetooth on.", false);
             return;
         }
         if (!connecting && (client == null || !client.isReady())) {
-            connectBoundScooter(false);
+            connectBoundScooter(null);
+        } else if (client != null && client.isReady()) {
+            client.refreshLockState();
         }
     }
 
-    private void lockBoundScooter() {
+    private void requestDesiredState(boolean locked) {
         if (!hasBlePermissions()) {
+            restoreLastSwitchState();
             requestBlePermissions();
             return;
         }
         if (adapter == null || !adapter.isEnabled()) {
+            restoreLastSwitchState();
             status("Turn Bluetooth on first.", false);
             return;
         }
         if (prefs.getString(PREF_ADDRESS, null) == null) {
+            restoreLastSwitchState();
             beginScan();
             return;
         }
 
-        lockPending = true;
-        lockButton.setEnabled(false);
+        lockSwitch.setEnabled(false);
+        status(locked ? "Locking…" : "Unlocking…", true);
         if (client != null && (connecting || client.isReady())) {
-            client.lockWhenReady();
+            client.setLockedWhenReady(locked);
         } else {
-            connectBoundScooter(true);
+            connectBoundScooter(locked);
         }
     }
 
-    private void connectBoundScooter(boolean queueLock) {
+    private void restoreLastSwitchState() {
+        if (lastLockState != null) setSwitchState(lastLockState);
+        else setSwitchUnknown();
+    }
+
+    private void connectBoundScooter(Boolean desiredState) {
         if (scanMode || scanning) return;
         String address = prefs.getString(PREF_ADDRESS, null);
         String name = prefs.getString(PREF_NAME, null);
@@ -222,6 +275,7 @@ public final class MainActivity extends Activity {
             BluetoothDevice device = adapter.getRemoteDevice(address);
             if (client != null) client.closeSilently();
             connecting = true;
+            setSwitchUnknown();
             client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
                 @Override public void onStatus(String text) {
                     status(text, true);
@@ -229,29 +283,64 @@ public final class MainActivity extends Activity {
 
                 @Override public void onReady() {
                     connecting = false;
-                    lockButton.setEnabled(!lockPending);
+                }
+
+                @Override public void onLockState(boolean locked) {
+                    setSwitchState(locked);
+                    status(locked ? "Locked" : "Unlocked", true);
+                }
+
+                @Override public void onActionResult(boolean success, Boolean locked, String message) {
+                    connecting = false;
+                    if (locked != null) setSwitchState(locked);
+                    else restoreLastSwitchState();
+                    status(message, success);
                 }
 
                 @Override public void onDisconnected(String reason) {
                     connecting = false;
-                    lockPending = false;
-                    lockButton.setEnabled(prefs.getString(PREF_ADDRESS, null) != null);
+                    setSwitchUnknown();
                     status(reason, false);
-                }
-
-                @Override public void onLockResult(boolean success, String message) {
-                    connecting = false;
-                    lockPending = false;
-                    lockButton.setEnabled(true);
-                    status(message, success);
                 }
             });
             client.connect(device, name);
-            if (queueLock) client.lockWhenReady();
+            if (desiredState != null) client.setLockedWhenReady(desiredState);
         } catch (IllegalArgumentException e) {
             connecting = false;
-            lockPending = false;
+            setSwitchUnknown();
             status("Saved Bluetooth address is invalid. Select the scooter again.", false);
+        }
+    }
+
+    private void requestHomeShortcut() {
+        if (prefs.getString(PREF_ADDRESS, null) == null) {
+            Toast.makeText(this, "Select a scooter first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            Toast.makeText(this, "Home shortcuts need Android 8 or newer.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        ShortcutManager manager = getSystemService(ShortcutManager.class);
+        if (manager == null || !manager.isRequestPinShortcutSupported()) {
+            Toast.makeText(this, "Your launcher does not support pinned shortcuts.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent intent = new Intent(this, ToggleShortcutActivity.class)
+                .setAction(ToggleShortcutActivity.ACTION_TOGGLE);
+        ShortcutInfo shortcut = new ShortcutInfo.Builder(this, SHORTCUT_ID)
+                .setShortLabel("Scooter lock")
+                .setLongLabel("Toggle scooter lock")
+                .setIcon(Icon.createWithResource(this, R.drawable.ic_shortcut_lock))
+                .setIntent(intent)
+                .build();
+
+        if (manager.requestPinShortcut(shortcut, null)) {
+            Toast.makeText(this, "Confirm the shortcut on your home screen.", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "Could not request the home shortcut.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -269,7 +358,8 @@ public final class MainActivity extends Activity {
 
         scanMode = true;
         connecting = false;
-        lockPending = false;
+        lastLockState = null;
+        setSwitchUnknown();
         if (client != null) {
             client.closeSilently();
             client = null;
@@ -303,7 +393,7 @@ public final class MainActivity extends Activity {
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
             finishScanAndReconnect();
-            status("BLE scanner unavailable.", false);
+            status("Bluetooth scanner is unavailable.", false);
             return;
         }
         ScanSettings settings = new ScanSettings.Builder()
@@ -315,13 +405,13 @@ public final class MainActivity extends Activity {
             scanner.startScan(null, settings, scanCallback);
         } catch (Exception e) {
             finishScanAndReconnect();
-            status("BLE scan failed.", false);
+            status("Bluetooth scan failed.", false);
             return;
         }
         main.postDelayed(() -> {
             if (scanning && scanMode) {
                 stopScanOnly();
-                status("Scan paused — reopen Select to scan again.", true);
+                status("Scan paused. Reopen Change scooter to scan again.", true);
             }
         }, 15000);
     }
@@ -334,7 +424,7 @@ public final class MainActivity extends Activity {
             if (results != null) for (ScanResult r : results) handleScanResult(r);
         }
         @Override public void onScanFailed(int errorCode) {
-            main.post(() -> status("BLE scan failed, code " + errorCode, false));
+            main.post(() -> status("Bluetooth scan failed.", false));
         }
     };
 
@@ -355,8 +445,7 @@ public final class MainActivity extends Activity {
         visibleLabels.clear();
         for (ScanResult result : entries) {
             visibleResults.add(result);
-            visibleLabels.add(scanName(result) + "\n" + result.getDevice().getAddress()
-                    + "   RSSI " + result.getRssi());
+            visibleLabels.add(scanName(result) + "\n" + result.getDevice().getAddress());
         }
         scanAdapter.notifyDataSetChanged();
     }
@@ -368,14 +457,15 @@ public final class MainActivity extends Activity {
         String name = scanName(result);
         stopScanOnly();
         scanMode = false;
+        lastLockState = null;
         prefs.edit()
                 .putString(PREF_ADDRESS, device.getAddress())
                 .putString(PREF_NAME, name)
                 .apply();
         refreshBoundDevice();
         if (scanDialog != null && scanDialog.isShowing()) scanDialog.dismiss();
-        status("Saved " + name + ". Connecting…", true);
-        main.postDelayed(() -> connectBoundScooter(false), 250);
+        status("Saved as favorite. Connecting…", true);
+        main.postDelayed(() -> connectBoundScooter(null), 250);
     }
 
     @SuppressLint("MissingPermission")
@@ -425,7 +515,7 @@ public final class MainActivity extends Activity {
     private void status(String text, boolean ok) {
         main.post(() -> {
             statusText.setText(text);
-            statusText.setTextColor(ok ? Color.rgb(40, 100, 55) : Color.rgb(170, 35, 35));
+            statusText.setTextColor(ok ? Color.rgb(45, 95, 60) : Color.rgb(165, 40, 40));
         });
     }
 
