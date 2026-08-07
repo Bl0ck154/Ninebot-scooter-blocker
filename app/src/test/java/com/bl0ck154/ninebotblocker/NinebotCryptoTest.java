@@ -7,41 +7,57 @@ import org.junit.Test;
 
 public final class NinebotCryptoTest {
     @Test
-    public void encryptsInitialPacketLikeNinebotCrypto() {
+    public void encryptsFirstShuInitAndAdvancesLocalCounter() {
         NinebotCrypto crypto = new NinebotCrypto("NBScooter2020");
-        byte[] encrypted = crypto.encrypt(NinebotProtocol.initPacket());
-        assertArrayEquals(hex("5AA500F565B968000046FF0000"), encrypted);
-        // miauth does not advance the counter merely because INIT was transmitted.
-        assertEquals(0, crypto.counter());
-    }
+        byte[] encrypted = crypto.encrypt(ShuNinebotProtocol.initPacket());
 
-    @Test
-    public void pingUsesFirstCipherWhileSynchronizedCounterIsZero() {
-        NinebotCrypto crypto = new NinebotCrypto("NBScooter2020");
-        crypto.encrypt(NinebotProtocol.initPacket());
-        crypto.setBleData(hex("000102030405060708090A0B0C0D0E0F"));
-
-        byte[] appKey = hex("101112131415161718191A1B1C1D1E1F");
-        byte[] encryptedPing = crypto.encrypt(NinebotProtocol.pingPacket(appKey));
-
-        assertEquals(0, crypto.counter());
         assertArrayEquals(
-                hex("5AA510610F02B92FEB678793EFE2B88ABBADFE403340A60000CDFD0000"),
-                encryptedPing);
+                hex("5AA500F665B968000045FF0000"),
+                encrypted);
+        assertEquals(1, crypto.counter());
     }
 
     @Test
-    public void firstMessageCrcTreatsPayloadBytesAsUnsigned() {
-        NinebotCrypto crypto = new NinebotCrypto("NBScooter2020");
-        crypto.setBleData(hex("000102030405060708090A0B0C0D0E0F"));
+    public void initResponseRekeysAndNextPingUsesCounterTwo() {
+        NinebotCrypto app = new NinebotCrypto("NBScooter2020");
+        app.encrypt(ShuNinebotProtocol.initPacket());
+        assertEquals(1, app.counter());
 
-        byte[] appKey = hex("808182838485868788898A8B8C8D8E8F");
-        byte[] encryptedPing = crypto.encrypt(NinebotProtocol.pingPacket(appKey));
+        byte[] bleKey = hex("000102030405060708090A0B0C0D0E0F");
+        byte[] serial = hex("3031323334353637383941424344");
+        byte[] plainResponse = concat(
+                hex("5AA51E213E5B01"),
+                bleKey,
+                serial);
 
-        // Last six bytes are 00 00 + CRC16 + 00 00. This vector catches the
-        // Java-signed-byte bug that INIT could not expose because its bytes are < 0x80.
-        assertArrayEquals(hex("0000CDF60000"),
-                java.util.Arrays.copyOfRange(encryptedPing, encryptedPing.length - 6, encryptedPing.length));
+        NinebotCrypto scooter = new NinebotCrypto("NBScooter2020");
+        byte[] encryptedResponse = scooter.encrypt(plainResponse);
+        byte[] decoded = app.decrypt(encryptedResponse);
+
+        assertArrayEquals(plainResponse, decoded);
+        assertEquals(1, app.counter());
+
+        app.encrypt(ShuNinebotProtocol.pingPacket());
+        assertEquals(2, app.counter());
+    }
+
+    @Test
+    public void fixedShuAppKeyIsExact() {
+        assertArrayEquals(
+                hex("4AEEBD73E2161C112D065A49CC6E8BB7"),
+                ShuNinebotProtocol.SHU_APP_KEY);
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        int length = 0;
+        for (byte[] part : parts) length += part.length;
+        byte[] out = new byte[length];
+        int offset = 0;
+        for (byte[] part : parts) {
+            System.arraycopy(part, 0, out, offset, part.length);
+            offset += part.length;
+        }
+        return out;
     }
 
     private static byte[] hex(String value) {
