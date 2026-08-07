@@ -23,11 +23,15 @@ public final class ToggleShortcutActivity extends Activity {
     private static final String PREFS = "ninebot_quick_lock";
     private static final String PREF_ADDRESS = "address";
     private static final String PREF_NAME = "name";
+    private static final String PREF_LOCK_KNOWN = "lock_state_known";
+    private static final String PREF_LOCK_STATE = "lock_state";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private NinebotBleClient client;
     private boolean done;
     private boolean pairingToastShown;
+    private boolean desiredLocked;
+    private SharedPreferences prefs;
 
     private final Runnable timeout = () -> finishWithMessage("Scooter did not respond in time.");
 
@@ -43,7 +47,7 @@ public final class ToggleShortcutActivity extends Activity {
 
     @SuppressLint("MissingPermission")
     private void startToggle() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         String address = prefs.getString(PREF_ADDRESS, null);
         String name = prefs.getString(PREF_NAME, null);
         if (address == null) {
@@ -67,6 +71,11 @@ public final class ToggleShortcutActivity extends Activity {
             return;
         }
 
+        boolean known = prefs.getBoolean(PREF_LOCK_KNOWN, false);
+        boolean current = prefs.getBoolean(PREF_LOCK_STATE, false);
+        // If state is not known yet, choose LOCK as the safe first shortcut action.
+        desiredLocked = known ? !current : true;
+
         try {
             BluetoothDevice device = adapter.getRemoteDevice(address);
             client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
@@ -80,11 +89,13 @@ public final class ToggleShortcutActivity extends Activity {
 
                 @Override public void onReady() {}
 
-                @Override public void onLockState(boolean locked) {}
-
                 @Override public void onActionResult(boolean success, Boolean locked, String message) {
                     if (done) return;
                     if (success && locked != null) {
+                        prefs.edit()
+                                .putBoolean(PREF_LOCK_KNOWN, true)
+                                .putBoolean(PREF_LOCK_STATE, locked)
+                                .apply();
                         finishWithMessage(locked ? "Scooter locked" : "Scooter unlocked");
                     } else {
                         finishWithMessage(message == null ? "Scooter lock toggle failed." : message);
@@ -96,7 +107,7 @@ public final class ToggleShortcutActivity extends Activity {
                 }
             });
             client.connect(device, name);
-            client.toggleWhenReady();
+            client.setLockedWhenReady(desiredLocked);
             main.removeCallbacks(timeout);
             main.postDelayed(timeout, 15000);
         } catch (IllegalArgumentException e) {
