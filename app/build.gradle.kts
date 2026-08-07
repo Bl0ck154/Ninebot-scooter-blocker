@@ -3,6 +3,14 @@ plugins {
 }
 
 val stableDebugKeystore = rootProject.file("ci/ninebot-debug.keystore")
+val releaseKeystore = rootProject.file("ci/release.keystore")
+val releaseStorePassword = System.getenv("RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("RELEASE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+val hasReleaseSigning = releaseKeystore.exists()
+        && !releaseStorePassword.isNullOrBlank()
+        && !releaseKeyAlias.isNullOrBlank()
+        && !releaseKeyPassword.isNullOrBlank()
 
 android {
     namespace = "com.bl0ck154.ninebotblocker"
@@ -12,8 +20,8 @@ android {
         applicationId = "com.bl0ck154.ninebotblocker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.7.1"
+        versionCode = 15
+        versionName = "0.8.0"
     }
 
     signingConfigs {
@@ -23,16 +31,23 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (hasReleaseSigning) {
+            create("releaseKey") {
+                storeFile = releaseKeystore
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         debug {
-            if (stableDebugKeystore.exists()) {
-                signingConfig = signingConfigs.getByName("stableDebug")
-            }
+            if (stableDebugKeystore.exists()) signingConfig = signingConfigs.getByName("stableDebug")
         }
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("releaseKey")
         }
     }
 

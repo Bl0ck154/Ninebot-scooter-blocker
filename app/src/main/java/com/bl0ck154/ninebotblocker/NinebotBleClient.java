@@ -17,25 +17,24 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.UUID;
 
-/**
- * Stable transport based on the known-good v0.6.0 SHU 2.7 NinebotCrypto path.
- * v0.7.1 deliberately does NOT perform register 0x1D status reads.
- */
+/** Known-good SHU 2.7 G30 transport; higher layers add reconnect/telemetry around it. */
 public final class NinebotBleClient {
     public interface Listener {
         void onStatus(String status);
         void onReady();
         void onDisconnected(String reason);
         void onActionResult(boolean success, Boolean locked, String message);
+        default void onTransportConnected() {}
+        default void onPacket(byte[] packet) {}
     }
 
-    private static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-    private static final UUID UART_RX = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
-    private static final UUID UART_TX = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+    public static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    public static final UUID UART_RX = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+    public static final UUID UART_TX = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final Context context;
-    private Listener listener;
+    private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<byte[]> writeQueue = new ArrayDeque<>();
     private final ByteArrayOutputStream receiveBuffer = new ByteArrayOutputStream();
@@ -44,7 +43,6 @@ public final class NinebotBleClient {
     private BluetoothGattCharacteristic rx;
     private NinebotCrypto crypto;
     private byte[] serial;
-
     private boolean cancelled;
     private boolean ready;
     private boolean writeInFlight;
@@ -53,14 +51,11 @@ public final class NinebotBleClient {
     private boolean pairAccepted;
     private boolean firstPairTriggerSent;
     private boolean pairingPromptShown;
-
     private Boolean pendingDesiredLock;
     private Boolean requestedLocked;
 
     private final Runnable connectionTimeout = () -> {
-        if (!cancelled && !ready) {
-            failConnection("Connection timed out. Keep the scooter on and try again.");
-        }
+        if (!cancelled && !ready) failConnection("Connection timed out. Keep the scooter on and try again.");
     };
 
     private final Runnable initRetry = new Runnable() {
@@ -75,11 +70,8 @@ public final class NinebotBleClient {
     private final Runnable pingRetry = new Runnable() {
         @Override public void run() {
             if (cancelled || ready || pingAccepted || !initAccepted || rx == null) return;
-            status(pairingPromptShown
-                    ? "Press the scooter POWER button once to pair."
-                    : "Authenticating…");
+            status(pairingPromptShown ? "Press the scooter POWER button once to pair." : "Authenticating…");
             sendEncrypted(ShuNinebotProtocol.pingPacket());
-
             if (!firstPairTriggerSent && serial != null) {
                 firstPairTriggerSent = true;
                 main.postDelayed(() -> {
@@ -88,9 +80,7 @@ public final class NinebotBleClient {
                     }
                 }, 500);
                 main.postDelayed(this, 1000);
-            } else {
-                main.postDelayed(this, 500);
-            }
+            } else main.postDelayed(this, 500);
         }
     };
 
@@ -107,8 +97,7 @@ public final class NinebotBleClient {
         if (!cancelled && requestedLocked != null) {
             Boolean completed = requestedLocked;
             requestedLocked = null;
-            listener.onActionResult(true, completed,
-                    completed ? "Scooter locked." : "Scooter unlocked.");
+            listener.onActionResult(true, completed, completed ? "Scooter locked." : "Scooter unlocked.");
         }
     };
 
@@ -117,9 +106,8 @@ public final class NinebotBleClient {
         this.listener = listener;
     }
 
-    public boolean isReady() {
-        return ready && gatt != null && rx != null;
-    }
+    public boolean isReady() { return ready && gatt != null && rx != null; }
+    public byte[] getSerial() { return serial == null ? null : Arrays.copyOf(serial, serial.length); }
 
     @SuppressLint("MissingPermission")
     public void connect(BluetoothDevice device, String preferredName) {
@@ -139,40 +127,32 @@ public final class NinebotBleClient {
         receiveBuffer.reset();
 
         String name = preferredName;
-        if (name == null || name.isBlank()) name = safeName(device);
-        if (name == null || name.isBlank()) name = "NBScooter2020";
+        if (name == null || name.trim().isEmpty()) name = safeName(device);
+        if (name == null || name.trim().isEmpty()) name = "NBScooter2020";
         crypto = new NinebotCrypto(name);
 
         status("Connecting…");
         main.removeCallbacks(connectionTimeout);
         main.postDelayed(connectionTimeout, 25000);
-        try {
-            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
-        } catch (Exception e) {
-            failConnection("Bluetooth connection failed.");
-        }
+        try { gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE); }
+        catch (Exception e) { failConnection("Bluetooth connection failed."); }
     }
 
-    /** Send LOCK or UNLOCK as soon as the known-good SHU authentication is ready. */
     public void setLockedWhenReady(boolean locked) {
         if (cancelled) return;
         pendingDesiredLock = locked;
-        if (!isReady()) {
-            status("Connecting…");
-            return;
-        }
+        if (!isReady()) { status("Connecting…"); return; }
         sendPendingAction();
     }
 
-    @SuppressLint("MissingPermission")
-    public void cancel() {
-        closeInternal(true);
+    public boolean sendProtocolPacket(byte[] plainPacket) {
+        if (!isReady() || plainPacket == null) return false;
+        sendEncrypted(plainPacket);
+        return true;
     }
 
-    @SuppressLint("MissingPermission")
-    public void closeSilently() {
-        closeInternal(false);
-    }
+    @SuppressLint("MissingPermission") public void cancel() { closeInternal(true); }
+    @SuppressLint("MissingPermission") public void closeSilently() { closeInternal(false); }
 
     @SuppressLint("MissingPermission")
     private void closeInternal(boolean notify) {
@@ -188,7 +168,6 @@ public final class NinebotBleClient {
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
         main.removeCallbacks(actionComplete);
-
         BluetoothGatt old = gatt;
         gatt = null;
         rx = null;
@@ -200,115 +179,80 @@ public final class NinebotBleClient {
     }
 
     private final BluetoothGattCallback callback = new BluetoothGattCallback() {
-        @Override
-        @SuppressLint("MissingPermission")
+        @Override @SuppressLint("MissingPermission")
         public void onConnectionStateChange(BluetoothGatt g, int statusCode, int newState) {
             if (cancelled || g != gatt) return;
+            if (statusCode != BluetoothGatt.GATT_SUCCESS && newState != BluetoothProfile.STATE_CONNECTED) {
+                failConnection("Bluetooth GATT error " + statusCode + ".");
+                return;
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                main.post(listener::onTransportConnected);
                 status("Connecting…");
                 try { g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH); } catch (Exception ignored) {}
                 if (!g.discoverServices()) failConnection("Could not open scooter Bluetooth services.");
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                failConnection("Scooter disconnected.");
-            }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) failConnection("Scooter disconnected.");
         }
 
-        @Override
-        @SuppressLint("MissingPermission")
+        @Override @SuppressLint("MissingPermission")
         public void onServicesDiscovered(BluetoothGatt g, int statusCode) {
             if (cancelled || g != gatt) return;
-            if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("Could not open scooter Bluetooth services.");
-                return;
-            }
-
+            if (statusCode != BluetoothGatt.GATT_SUCCESS) { failConnection("Could not open scooter Bluetooth services."); return; }
             BluetoothGattService service = g.getService(UART_SERVICE);
-            if (service == null) {
-                failConnection("Ninebot Bluetooth service not found.");
-                return;
-            }
+            if (service == null) { failConnection("Ninebot Bluetooth service not found."); return; }
             rx = service.getCharacteristic(UART_RX);
             BluetoothGattCharacteristic tx = service.getCharacteristic(UART_TX);
-            if (rx == null || tx == null) {
-                failConnection("Ninebot Bluetooth channel is unavailable.");
-                return;
-            }
-
+            if (rx == null || tx == null) { failConnection("Ninebot Bluetooth channel is unavailable."); return; }
             BluetoothGattDescriptor cccd = tx.getDescriptor(CCCD);
-            if (cccd == null || !g.setCharacteristicNotification(tx, true)) {
-                failConnection("Could not enable scooter responses.");
-                return;
-            }
+            if (cccd == null || !g.setCharacteristicNotification(tx, true)) { failConnection("Could not enable scooter responses."); return; }
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            if (!g.writeDescriptor(cccd)) {
-                failConnection("Could not enable scooter responses.");
-            }
+            if (!g.writeDescriptor(cccd)) failConnection("Could not enable scooter responses.");
         }
 
-        @Override
-        public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int statusCode) {
+        @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int statusCode) {
             if (cancelled || g != gatt) return;
-            if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("Bluetooth setup failed.");
-                return;
-            }
+            if (statusCode != BluetoothGatt.GATT_SUCCESS) { failConnection("Bluetooth setup failed."); return; }
             main.removeCallbacks(initRetry);
             main.post(initRetry);
         }
 
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
+        @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic) {
             if (cancelled || g != gatt) return;
             byte[] value = characteristic.getValue();
             if (value != null && value.length > 0) handleEncryptedFragment(value);
         }
 
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic, byte[] value) {
+        @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic characteristic, byte[] value) {
             if (cancelled || g != gatt) return;
             if (value != null && value.length > 0) handleEncryptedFragment(value);
         }
 
-        @Override
-        public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int statusCode) {
+        @Override public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (cancelled || g != gatt) return;
             writeInFlight = false;
-            if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                failConnection("Bluetooth write failed.");
-                return;
-            }
+            if (statusCode != BluetoothGatt.GATT_SUCCESS) { failConnection("Bluetooth write failed."); return; }
             writeNextChunk();
         }
     };
 
     private void handleEncryptedFragment(byte[] fragment) {
         try {
-            if (fragment.length >= 2
-                    && (fragment[0] & 0xFF) == 0x5A
-                    && (fragment[1] & 0xFF) == 0xA5
-                    && receiveBuffer.size() > 0) {
-                receiveBuffer.reset();
-            }
+            if (fragment.length >= 2 && (fragment[0] & 0xFF) == 0x5A && (fragment[1] & 0xFF) == 0xA5 && receiveBuffer.size() > 0) receiveBuffer.reset();
             receiveBuffer.write(fragment, 0, fragment.length);
-
             while (true) {
                 byte[] accumulated = receiveBuffer.toByteArray();
                 if (accumulated.length < 3) return;
                 int expected = ShuNinebotProtocol.encryptedPacketLengthFromHeader(accumulated);
                 if (expected < 13 || accumulated.length < expected) return;
-
                 byte[] frame = Arrays.copyOfRange(accumulated, 0, expected);
                 byte[] remainder = Arrays.copyOfRange(accumulated, expected, accumulated.length);
                 receiveBuffer.reset();
                 if (remainder.length > 0) receiveBuffer.write(remainder, 0, remainder.length);
-
                 byte[] plain = crypto.decrypt(frame);
                 if (ShuNinebotProtocol.isPacket(plain)) handlePacket(plain);
                 if (remainder.length == 0) return;
             }
         } catch (Exception e) {
-            // Authentication responses must decode. Once ready, ignore unexpected/unsolicited
-            // notifications instead of destroying the working v0.6 connection.
             receiveBuffer.reset();
             if (!ready) failConnection("Scooter response could not be decoded.");
         }
@@ -318,7 +262,6 @@ public final class NinebotBleClient {
         int command = ShuNinebotProtocol.command(packet);
         int index = ShuNinebotProtocol.index(packet);
         byte[] payload = ShuNinebotProtocol.payload(packet);
-
         if (command == ShuNinebotProtocol.CMD_INIT && payload.length == 30) {
             serial = Arrays.copyOfRange(payload, 16, 30);
             if (!initAccepted) {
@@ -329,7 +272,6 @@ public final class NinebotBleClient {
             }
             return;
         }
-
         if (command == ShuNinebotProtocol.CMD_PING) {
             if (index == 1) {
                 if (!pingAccepted) {
@@ -344,26 +286,26 @@ public final class NinebotBleClient {
             }
             return;
         }
-
         if (command == ShuNinebotProtocol.CMD_PAIR && index == 1) {
             pairAccepted = true;
             main.removeCallbacks(pairRetry);
             markReady();
             return;
         }
-
         if (requestedLocked != null) {
             int expectedReg = requestedLocked ? ShuNinebotProtocol.REG_LOCK : ShuNinebotProtocol.REG_UNLOCK;
             if (index == expectedReg && (command == 0x02 || command == 0x05 || command == 0x32)) {
                 Boolean completed = requestedLocked;
                 requestedLocked = null;
                 main.removeCallbacks(actionComplete);
-                listener.onActionResult(true, completed,
-                        completed ? "Scooter locked." : "Scooter unlocked.");
+                listener.onActionResult(true, completed, completed ? "Scooter locked." : "Scooter unlocked.");
             }
         }
+        byte[] safeCopy = Arrays.copyOf(packet, packet.length);
+        main.post(() -> listener.onPacket(safeCopy));
     }
 
+    @SuppressLint("MissingPermission")
     private void markReady() {
         if (ready) return;
         ready = true;
@@ -371,6 +313,9 @@ public final class NinebotBleClient {
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
+        if (gatt != null) {
+            try { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED); } catch (Exception ignored) {}
+        }
         status("Connected");
         listener.onReady();
         sendPendingAction();
@@ -402,20 +347,12 @@ public final class NinebotBleClient {
         if (cancelled || writeInFlight || gatt == null || rx == null) return;
         byte[] chunk = writeQueue.poll();
         if (chunk == null) return;
-
         writeInFlight = true;
         rx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rx.setValue(chunk);
         boolean accepted;
-        try {
-            accepted = gatt.writeCharacteristic(rx);
-        } catch (Exception e) {
-            accepted = false;
-        }
-        if (!accepted) {
-            writeInFlight = false;
-            failConnection("Android rejected the Bluetooth write.");
-        }
+        try { accepted = gatt.writeCharacteristic(rx); } catch (Exception e) { accepted = false; }
+        if (!accepted) { writeInFlight = false; failConnection("Android rejected the Bluetooth write."); }
     }
 
     private void failConnection(String message) {
@@ -424,17 +361,13 @@ public final class NinebotBleClient {
         main.post(() -> listener.onDisconnected(message));
     }
 
-    private void status(String text) {
-        main.post(() -> listener.onStatus(text));
-    }
+    private void status(String text) { main.post(() -> listener.onStatus(text)); }
 
     @SuppressLint("MissingPermission")
     private String safeName(BluetoothDevice device) {
         try {
             String name = device.getName();
             return name == null ? "" : name;
-        } catch (SecurityException e) {
-            return "";
-        }
+        } catch (SecurityException e) { return ""; }
     }
 }

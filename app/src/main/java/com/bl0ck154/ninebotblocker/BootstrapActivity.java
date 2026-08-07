@@ -6,18 +6,12 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.widget.Toast;
 
-/**
- * Small launcher used by the diagnostic build to obtain the complete set of
- * permissions Android's BLE scanner expects. We do not read GPS coordinates;
- * ACCESS_FINE_LOCATION is requested only so BLE advertisements are not filtered.
- */
+/** Launcher that requests only the BLE permissions actually required by each Android version. */
 public final class BootstrapActivity extends Activity {
     private static final int REQ = 1001;
 
-    @Override
-    protected void onCreate(Bundle state) {
+    @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         requestNeededPermissionsOrContinue();
     }
@@ -26,12 +20,10 @@ public final class BootstrapActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             boolean scan = checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
             boolean connect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
-            boolean location = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-            if (!scan || !connect || !location) {
+            if (!scan || !connect) {
                 requestPermissions(new String[]{
                         Manifest.permission.BLUETOOTH_SCAN,
-                        Manifest.permission.BLUETOOTH_CONNECT,
-                        Manifest.permission.ACCESS_FINE_LOCATION
+                        Manifest.permission.BLUETOOTH_CONNECT
                 }, REQ);
                 return;
             }
@@ -42,18 +34,9 @@ public final class BootstrapActivity extends Activity {
         openMain();
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQ) {
-            boolean locationGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-            if (!locationGranted) {
-                Toast.makeText(this,
-                        "Location permission is required in this diagnostic build so Android returns unfiltered BLE scan results.",
-                        Toast.LENGTH_LONG).show();
-            }
-            openMain();
-        }
+        if (requestCode == REQ) openMain();
     }
 
     private void openMain() {

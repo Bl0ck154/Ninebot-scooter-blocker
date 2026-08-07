@@ -1,260 +1,311 @@
 package com.bl0ck154.ninebotblocker;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothManager;
-import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanRecord;
-import android.bluetooth.le.ScanResult;
-import android.bluetooth.le.ScanSettings;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CompoundButton;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Locale;
 
-/**
- * Clean one-favorite-scooter UI on top of the known-good v0.6.0 transport.
- * Connection/authentication state never disables the user's lock control:
- * actions can be queued while the scooter is connecting, just like v0.6.0.
- */
-public final class MainActivity extends Activity {
-    private static final int REQ_PERMISSIONS = 42;
-    private static final String PREFS = "ninebot_quick_lock";
-    private static final String PREF_ADDRESS = "address";
-    private static final String PREF_NAME = "name";
-    private static final String PREF_LOCK_KNOWN = "lock_state_known";
-    private static final String PREF_LOCK_STATE = "lock_state";
-    private static final String SHORTCUT_ID = "toggle_scooter_lock";
+/** Lightweight G30 dashboard. Bluetooth transport is owned by ScooterRepository. */
+public final class MainActivity extends Activity implements ScooterRepository.Listener {
+    private static final int REQ_BLE = 42;
+    private static final int REQ_NOTIFICATIONS = 43;
 
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private final LinkedHashMap<String, ScanResult> scooterResults = new LinkedHashMap<>();
-    private final ArrayList<ScanResult> visibleResults = new ArrayList<>();
-    private final ArrayList<String> visibleLabels = new ArrayList<>();
+    private ScooterRepository repository;
+    private TextView deviceText, stateText, batteryPercentText, batteryText, rideText, tripText,
+            rangeText, totalText, tempText, statusText;
+    private Button lockButton, batteryHelpButton;
+    private Switch persistentSwitch, autoConnectSwitch;
+    private boolean suppressSwitches;
 
-    private BluetoothAdapter adapter;
-    private BluetoothLeScanner scanner;
-    private SharedPreferences prefs;
-    private TextView deviceText;
-    private TextView addressText;
-    private TextView stateText;
-    private TextView statusText;
-    private Switch lockSwitch;
-    private LinearLayout toggleCard;
-    private Button selectButton;
-    private Button shortcutButton;
-    private NinebotBleClient client;
-    private AlertDialog scanDialog;
-    private ArrayAdapter<String> scanAdapter;
-
-    private boolean scanning;
-    private boolean scanMode;
-    private boolean connecting;
-    private boolean suppressSwitchCallback;
-    private Boolean lastLockState;
-
-    @Override
-    protected void onCreate(Bundle state) {
+    @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (prefs.getBoolean(PREF_LOCK_KNOWN, false)) {
-            lastLockState = prefs.getBoolean(PREF_LOCK_STATE, false);
-        }
-        BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-        adapter = manager == null ? null : manager.getAdapter();
+        repository = ScooterRepository.get(this);
         buildUi();
-        refreshBoundDevice();
-        main.post(this::autoConnectIfPossible);
+        requestBlePermissionsIfNeeded();
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        repository.addListener(this);
+        if (hasBlePermissions()) repository.setUiActive(true);
+    }
+
+    @Override protected void onStop() {
+        repository.removeListener(this);
+        repository.setUiActive(false);
+        super.onStop();
     }
 
     private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(246, 247, 249));
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(dp(24), dp(44), dp(24), dp(28));
-        root.setBackgroundColor(Color.rgb(247, 247, 247));
+        root.setPadding(dp(20), dp(34), dp(20), dp(28));
+        scroll.addView(root, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
-        TextView title = new TextView(this);
-        title.setText("Ninebot Quick Lock");
-        title.setTextSize(28);
-        title.setTextColor(Color.rgb(20, 20, 20));
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, matchWrap(dp(28)));
+        TextView title = text("Ninebot Max G30", 28, Color.rgb(20, 22, 25));
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        root.addView(title, full(dp(2)));
+        deviceText = text("No scooter selected", 13, Color.GRAY);
+        root.addView(deviceText, full(dp(2)));
+        stateText = text("Disconnected", 16, Color.DKGRAY);
+        root.addView(stateText, full(dp(20)));
 
-        deviceText = new TextView(this);
-        deviceText.setTextSize(20);
-        deviceText.setTextColor(Color.rgb(30, 30, 30));
-        deviceText.setGravity(Gravity.CENTER);
-        root.addView(deviceText, matchWrap(dp(2)));
+        batteryPercentText = text("--%", 54, Color.rgb(25, 27, 30));
+        batteryPercentText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        batteryPercentText.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(batteryPercentText, full(dp(18)));
 
-        addressText = new TextView(this);
-        addressText.setTextSize(12);
-        addressText.setTextColor(Color.GRAY);
-        addressText.setGravity(Gravity.CENTER);
-        root.addView(addressText, matchWrap(dp(26)));
+        batteryText = addCard(root, "Battery");
+        rideText = addCard(root, "Ride");
+        tripText = addCard(root, "Trip");
+        rangeText = addCard(root, "Range");
+        totalText = addCard(root, "Total");
+        tempText = addCard(root, "Temperature");
 
-        toggleCard = new LinearLayout(this);
-        toggleCard.setOrientation(LinearLayout.HORIZONTAL);
-        toggleCard.setGravity(Gravity.CENTER_VERTICAL);
-        toggleCard.setPadding(dp(20), dp(14), dp(16), dp(14));
-        toggleCard.setBackground(roundedCard());
-
-        stateText = new TextView(this);
-        stateText.setTextSize(22);
-        stateText.setTextColor(Color.rgb(25, 25, 25));
-        stateText.setText("State unknown");
-        LinearLayout.LayoutParams stateParams = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        toggleCard.addView(stateText, stateParams);
-
-        lockSwitch = new Switch(this);
-        lockSwitch.setText("");
-        lockSwitch.setShowText(false);
-        lockSwitch.setSwitchMinWidth(dp(66));
-        applySwitchColors();
-        lockSwitch.setOnCheckedChangeListener((button, checked) -> {
-            if (suppressSwitchCallback) return;
-            requestDesiredState(checked);
+        lockButton = new Button(this);
+        lockButton.setText("LOCK");
+        lockButton.setTextSize(20);
+        lockButton.setAllCaps(false);
+        lockButton.setMinHeight(dp(64));
+        lockButton.setOnClickListener(v -> {
+            Boolean locked = repository.snapshot().telemetry.getLocked();
+            if (Boolean.TRUE.equals(locked)) repository.unlockScooter();
+            else repository.lockScooter();
         });
-        toggleCard.addView(lockSwitch, new LinearLayout.LayoutParams(dp(78), dp(54)));
-        toggleCard.setOnClickListener(v -> {
-            if (lockSwitch.isEnabled()) lockSwitch.toggle();
+        root.addView(lockButton, full(dp(16)));
+
+        persistentSwitch = addSetting(root, "Persistent notification");
+        persistentSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (suppressSwitches) return;
+            if (checked && Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+                setSwitchWithoutCallback(persistentSwitch, false);
+                return;
+            }
+            setPersistentConnection(checked);
         });
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(86));
-        cardParams.setMargins(0, 0, 0, dp(18));
-        root.addView(toggleCard, cardParams);
+        autoConnectSwitch = addSetting(root, "Auto connect");
+        autoConnectSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (!suppressSwitches) repository.setAutoConnectEnabled(checked);
+        });
 
-        selectButton = new Button(this);
-        selectButton.setText("Change scooter");
+        batteryHelpButton = new Button(this);
+        batteryHelpButton.setText("Battery optimization help");
+        batteryHelpButton.setAllCaps(false);
+        batteryHelpButton.setOnClickListener(v -> showBatteryHelp());
+        batteryHelpButton.setVisibility(View.GONE);
+        root.addView(batteryHelpButton, full(dp(10)));
+
+        Button selectButton = new Button(this);
+        selectButton.setText("Select / change scooter");
         selectButton.setAllCaps(false);
-        selectButton.setOnClickListener(v -> beginScan());
-        root.addView(selectButton, matchWrap(dp(10)));
+        selectButton.setOnClickListener(v -> startScooterPicker());
+        root.addView(selectButton, full(dp(8)));
 
-        shortcutButton = new Button(this);
-        shortcutButton.setText("Add home shortcut");
+        Button shortcutButton = new Button(this);
+        shortcutButton.setText("Add home lock shortcut");
         shortcutButton.setAllCaps(false);
         shortcutButton.setOnClickListener(v -> requestHomeShortcut());
-        root.addView(shortcutButton, matchWrap(dp(22)));
+        root.addView(shortcutButton, full(dp(12)));
 
-        statusText = new TextView(this);
-        statusText.setTextSize(14);
-        statusText.setTextColor(Color.DKGRAY);
-        statusText.setGravity(Gravity.CENTER);
-        statusText.setText("Ready");
-        root.addView(statusText, matchWrap(0));
-
-        setContentView(root);
+        statusText = text("Ready", 13, Color.DKGRAY);
+        statusText.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(statusText, full(0));
+        setContentView(scroll);
     }
 
-    private GradientDrawable roundedCard() {
+    private TextView addCard(LinearLayout root, String label) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(Color.WHITE);
-        bg.setCornerRadius(dp(18));
-        bg.setStroke(dp(1), Color.rgb(220, 220, 220));
-        return bg;
+        bg.setCornerRadius(dp(16));
+        bg.setStroke(dp(1), Color.rgb(225, 227, 230));
+        card.setBackground(bg);
+        TextView labelView = text(label, 12, Color.GRAY);
+        TextView valueView = text("—", 20, Color.rgb(25, 27, 30));
+        valueView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(labelView);
+        card.addView(valueView);
+        root.addView(card, full(dp(10)));
+        return valueView;
     }
 
-    private void applySwitchColors() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return;
-        int[][] states = new int[][]{
-                new int[]{android.R.attr.state_checked},
-                new int[]{-android.R.attr.state_checked}
-        };
-        lockSwitch.setThumbTintList(new ColorStateList(states,
-                new int[]{Color.WHITE, Color.WHITE}));
-        lockSwitch.setTrackTintList(new ColorStateList(states,
-                new int[]{Color.rgb(55, 150, 80), Color.rgb(150, 150, 150)}));
+    private Switch addSetting(LinearLayout root, String label) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView text = text(label, 16, Color.rgb(30, 32, 35));
+        row.addView(text, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Switch toggle = new Switch(this);
+        row.addView(toggle);
+        root.addView(row, full(dp(10)));
+        return toggle;
     }
 
-    private LinearLayout.LayoutParams matchWrap(int bottomMargin) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        p.setMargins(0, 0, 0, bottomMargin);
-        return p;
+    @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) { runOnUiThread(() -> render(snapshot)); }
+
+    private void render(ScooterRepository.Snapshot snapshot) {
+        ScooterTelemetry t = snapshot.telemetry;
+        deviceText.setText(snapshot.address == null ? "No scooter selected" : snapshot.deviceName + " · " + snapshot.address);
+        stateText.setText(prettyState(snapshot.connectionState));
+        statusText.setText(snapshot.status == null ? "" : snapshot.status);
+        batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
+        batteryText.setText(formatBattery(t));
+        rideText.setText(t.getSpeed() == null ? "—" : f("%.1f km/h", t.getSpeed()));
+        tripText.setText(t.getTripDistance() == null ? "—" : f("%.2f km", t.getTripDistance()));
+        rangeText.setText(t.getRemainingRange() == null ? "—" : f("%.1f km", t.getRemainingRange()));
+        totalText.setText(t.getTotalDistance() == null ? "—" : f("%,.1f km", t.getTotalDistance()));
+        tempText.setText(formatTemperature(t));
+        Boolean locked = t.getLocked();
+        lockButton.setText(Boolean.TRUE.equals(locked) ? "UNLOCK" : "LOCK");
+        lockButton.setEnabled(snapshot.address != null);
+        suppressSwitches = true;
+        persistentSwitch.setChecked(snapshot.persistent);
+        autoConnectSwitch.setChecked(snapshot.autoConnect);
+        suppressSwitches = false;
+        updateBatteryHelpVisibility(snapshot.persistent);
     }
 
-    private boolean hasFavorite() {
-        return prefs.getString(PREF_ADDRESS, null) != null;
+    private String formatBattery(ScooterTelemetry t) {
+        ArrayList<String> parts = new ArrayList<>();
+        if (t.getBatteryVoltage() != null) parts.add(f("%.1f V", t.getBatteryVoltage()));
+        if (t.getBatteryCurrent() != null) parts.add(f("%.2f A", t.getBatteryCurrent()));
+        if (t.getBatteryPower() != null) parts.add(f("%.0f W", t.getBatteryPower()));
+        return parts.isEmpty() ? "—" : String.join(" · ", parts);
     }
 
-    private void refreshBoundDevice() {
-        String address = prefs.getString(PREF_ADDRESS, null);
-        String name = prefs.getString(PREF_NAME, null);
-        if (address == null) {
-            deviceText.setText("No scooter selected");
-            addressText.setText("");
-            shortcutButton.setEnabled(false);
-            renderState(null);
-            setControlAvailable(false);
-            status("Select a scooter", true);
+    private String formatTemperature(ScooterTelemetry t) {
+        if (t.getControllerTemperature() != null && t.getBatteryTemperature() != null) {
+            return f("Controller %.1f°C · Battery %.1f°C", t.getControllerTemperature(), t.getBatteryTemperature());
+        }
+        if (t.getControllerTemperature() != null) return f("Controller %.1f°C", t.getControllerTemperature());
+        if (t.getBatteryTemperature() != null) return f("Battery %.1f°C", t.getBatteryTemperature());
+        return "—";
+    }
+
+    private void startScooterPicker() {
+        if (!hasBlePermissions()) { requestBlePermissionsIfNeeded(); return; }
+        LinkedHashMap<String, String> namesByAddress = new LinkedHashMap<>();
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<String> addresses = new ArrayList<>();
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, labels);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Select your Ninebot")
+                .setAdapter(adapter, (d, which) -> {
+                    if (which >= 0 && which < addresses.size()) {
+                        String address = addresses.get(which);
+                        repository.selectScooter(address, namesByAddress.get(address));
+                    }
+                })
+                .setNegativeButton("Cancel", (d, w) -> repository.stopDiscovery()).create();
+        dialog.setOnDismissListener(d -> repository.stopDiscovery());
+        dialog.show();
+
+        repository.startDiscovery(new ScooterRepository.DiscoveryListener() {
+            @Override public void onDevice(String address, String name, int rssi) {
+                runOnUiThread(() -> {
+                    if (namesByAddress.containsKey(address)) return;
+                    namesByAddress.put(address, name);
+                    addresses.add(address);
+                    labels.add((name == null || name.trim().isEmpty() ? "Ninebot" : name)
+                            + "\n" + address + "   " + rssi + " dBm");
+                    adapter.notifyDataSetChanged();
+                });
+            }
+            @Override public void onFinished() {
+                runOnUiThread(() -> {
+                    if (labels.isEmpty()) Toast.makeText(MainActivity.this,
+                            "No Ninebot scooter found. Keep the G30 switched on.", Toast.LENGTH_LONG).show();
+                });
+            }
+            @Override public void onError(String message) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void requestHomeShortcut() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        ShortcutManager manager = getSystemService(ShortcutManager.class);
+        if (manager == null || !manager.isRequestPinShortcutSupported()) {
+            Toast.makeText(this, "Pinned shortcuts are not supported by this launcher.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent intent = new Intent(this, ToggleShortcutActivity.class).setAction(ToggleShortcutActivity.ACTION_TOGGLE);
+        ShortcutInfo info = new ShortcutInfo.Builder(this, "ninebot-lock-toggle")
+                .setShortLabel("Ninebot lock")
+                .setLongLabel("Toggle Ninebot Max lock")
+                .setIcon(Icon.createWithResource(this, R.drawable.ic_shortcut_lock))
+                .setIntent(intent)
+                .build();
+        manager.requestPinShortcut(info, null);
+    }
+
+    private void setPersistentConnection(boolean enabled) {
+        if (enabled && !hasBlePermissions()) {
+            requestBlePermissionsIfNeeded();
+            setSwitchWithoutCallback(persistentSwitch, false);
+            return;
+        }
+        if (enabled) {
+            Intent intent = new Intent(this, ScooterService.class).setAction(ScooterService.ACTION_START);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
+            else startService(intent);
         } else {
-            deviceText.setText(name == null || name.isBlank() ? "Ninebot" : name);
-            addressText.setText(address);
-            shortcutButton.setEnabled(true);
-            renderState(lastLockState);
-            setControlAvailable(true);
+            repository.setPersistentEnabled(false);
+            startService(new Intent(this, ScooterService.class).setAction(ScooterService.ACTION_STOP));
         }
     }
 
-    private void renderState(Boolean locked) {
-        suppressSwitchCallback = true;
-        if (locked == null) {
-            lockSwitch.setChecked(false);
-            stateText.setText("State unknown");
-        } else {
-            lockSwitch.setChecked(locked);
-            stateText.setText(locked ? "Locked" : "Unlocked");
-        }
-        suppressSwitchCallback = false;
+    private void updateBatteryHelpVisibility(boolean persistent) {
+        if (!persistent || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { batteryHelpButton.setVisibility(View.GONE); return; }
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        boolean ignored = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        batteryHelpButton.setVisibility(ignored ? View.GONE : View.VISIBLE);
     }
 
-    private void setControlAvailable(boolean available) {
-        lockSwitch.setEnabled(available);
-        toggleCard.setAlpha(available ? 1f : 0.55f);
-    }
-
-    private void saveKnownState(boolean locked) {
-        lastLockState = locked;
-        prefs.edit()
-                .putBoolean(PREF_LOCK_KNOWN, true)
-                .putBoolean(PREF_LOCK_STATE, locked)
-                .apply();
-        renderState(locked);
-        setControlAvailable(hasFavorite());
-    }
-
-    private void clearKnownState() {
-        lastLockState = null;
-        prefs.edit().remove(PREF_LOCK_KNOWN).remove(PREF_LOCK_STATE).apply();
+    private void showBatteryHelp() {
+        new AlertDialog.Builder(this)
+                .setTitle("Background connection")
+                .setMessage("If Android keeps stopping the scooter connection, open Battery optimization settings and allow this app to run reliably in the background. The app does not hold a permanent wake lock.")
+                .setPositiveButton("Open settings", (d, w) -> {
+                    try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                    catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
+                })
+                .setNegativeButton("Later", null).show();
     }
 
     private boolean hasBlePermissions() {
@@ -265,342 +316,58 @@ public final class MainActivity extends Activity {
         return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void requestBlePermissions() {
+    private void requestBlePermissionsIfNeeded() {
+        if (hasBlePermissions()) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            requestPermissions(new String[]{
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-            }, REQ_PERMISSIONS);
-        } else {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_PERMISSIONS);
-        }
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}, REQ_BLE);
+        } else requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_BLE);
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQ_PERMISSIONS) {
-            if (hasBlePermissions()) autoConnectIfPossible();
-            else status("Bluetooth permission is required.", false);
+        if (requestCode == REQ_BLE) {
+            if (hasBlePermissions()) repository.setUiActive(true);
+            else Toast.makeText(this, "Bluetooth access is required to connect to the G30.", Toast.LENGTH_LONG).show();
+        } else if (requestCode == REQ_NOTIFICATIONS) {
+            boolean granted = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+            if (granted) setPersistentConnection(true);
+            else Toast.makeText(this, "Notification permission is needed for the persistent connection.", Toast.LENGTH_LONG).show();
         }
     }
 
-    private void autoConnectIfPossible() {
-        if (scanMode || scanning || !hasFavorite()) return;
-        setControlAvailable(true);
-        if (!hasBlePermissions()) {
-            requestBlePermissions();
-            return;
-        }
-        if (adapter == null || !adapter.isEnabled()) {
-            status("Turn Bluetooth on", false);
-            return;
-        }
-        if (!connecting && (client == null || !client.isReady())) {
-            connectBoundScooter(null);
-        } else if (client != null && client.isReady()) {
-            status("Connected", true);
+    private void setSwitchWithoutCallback(CompoundButton button, boolean checked) {
+        suppressSwitches = true;
+        button.setChecked(checked);
+        suppressSwitches = false;
+    }
+
+    private static String prettyState(ScooterConnectionState state) {
+        if (state == null) return "Disconnected";
+        switch (state) {
+            case READY: return "Connected";
+            case RECONNECTING: return "Reconnecting";
+            case CONNECTING: return "Connecting";
+            case SCANNING: return "Scanning";
+            case CONNECTED: return "Authenticating";
+            case ERROR: return "Connection error";
+            default: return "Disconnected";
         }
     }
 
-    private void requestDesiredState(boolean locked) {
-        if (!hasFavorite()) {
-            renderState(lastLockState);
-            beginScan();
-            return;
-        }
-        if (!hasBlePermissions()) {
-            renderState(lastLockState);
-            requestBlePermissions();
-            return;
-        }
-        if (adapter == null || !adapter.isEnabled()) {
-            renderState(lastLockState);
-            status("Turn Bluetooth on first", false);
-            return;
-        }
-
-        // Do not disable the switch while connecting. The v0.6 transport can queue
-        // the requested state and execute it as soon as authentication completes.
-        stateText.setText(locked ? "Locking…" : "Unlocking…");
-        status(connecting ? "Command queued while connecting…" : (locked ? "Locking…" : "Unlocking…"), true);
-
-        if (client != null && (connecting || client.isReady())) {
-            client.setLockedWhenReady(locked);
-        } else {
-            connectBoundScooter(locked);
-        }
+    private TextView text(String value, int size, int color) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        return view;
     }
 
-    private void connectBoundScooter(Boolean desiredState) {
-        if (scanMode || scanning) return;
-        String address = prefs.getString(PREF_ADDRESS, null);
-        String name = prefs.getString(PREF_NAME, null);
-        if (address == null) return;
-
-        try {
-            BluetoothDevice device = adapter.getRemoteDevice(address);
-            if (client != null) client.closeSilently();
-            connecting = true;
-            setControlAvailable(true);
-            client = new NinebotBleClient(this, new NinebotBleClient.Listener() {
-                @Override public void onStatus(String text) {
-                    status(text, true);
-                }
-
-                @Override public void onReady() {
-                    connecting = false;
-                    setControlAvailable(true);
-                    if (stateText.getText().toString().equals("State unknown")) {
-                        renderState(lastLockState);
-                    }
-                    status("Connected", true);
-                }
-
-                @Override public void onActionResult(boolean success, Boolean locked, String message) {
-                    connecting = false;
-                    if (success && locked != null) {
-                        saveKnownState(locked);
-                    } else {
-                        renderState(lastLockState);
-                        setControlAvailable(true);
-                    }
-                    status(message, success);
-                }
-
-                @Override public void onDisconnected(String reason) {
-                    connecting = false;
-                    renderState(lastLockState);
-                    setControlAvailable(hasFavorite());
-                    status(reason, false);
-                }
-            });
-            client.connect(device, name);
-            if (desiredState != null) client.setLockedWhenReady(desiredState);
-        } catch (IllegalArgumentException e) {
-            connecting = false;
-            renderState(lastLockState);
-            setControlAvailable(hasFavorite());
-            status("Saved scooter address is invalid. Select it again.", false);
-        }
+    private LinearLayout.LayoutParams full(int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p.setMargins(0, 0, 0, bottom);
+        return p;
     }
 
-    private void requestHomeShortcut() {
-        if (!hasFavorite()) {
-            Toast.makeText(this, "Select a scooter first.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            Toast.makeText(this, "Home shortcuts need Android 8 or newer.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        ShortcutManager manager = getSystemService(ShortcutManager.class);
-        if (manager == null || !manager.isRequestPinShortcutSupported()) {
-            Toast.makeText(this, "Your launcher does not support pinned shortcuts.", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        Intent intent = new Intent(this, ToggleShortcutActivity.class)
-                .setAction(ToggleShortcutActivity.ACTION_TOGGLE);
-        ShortcutInfo shortcut = new ShortcutInfo.Builder(this, SHORTCUT_ID)
-                .setShortLabel("Scooter lock")
-                .setLongLabel("Toggle scooter lock")
-                .setIcon(Icon.createWithResource(this, R.drawable.ic_shortcut_lock))
-                .setIntent(intent)
-                .build();
-
-        if (manager.requestPinShortcut(shortcut, null)) {
-            Toast.makeText(this, "Confirm the shortcut on your home screen.", Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, "Could not request the home shortcut.", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private void beginScan() {
-        if (!hasBlePermissions()) {
-            requestBlePermissions();
-            return;
-        }
-        if (adapter == null || !adapter.isEnabled()) {
-            status("Turn Bluetooth on first", false);
-            return;
-        }
-
-        scanMode = true;
-        connecting = false;
-        if (client != null) {
-            client.closeSilently();
-            client = null;
-        }
-        stopScanOnly();
-
-        scooterResults.clear();
-        visibleResults.clear();
-        visibleLabels.clear();
-        scanAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, visibleLabels);
-        scanDialog = new AlertDialog.Builder(this)
-                .setTitle("Select scooter")
-                .setAdapter(scanAdapter, (dialog, which) -> {
-                    if (which >= 0 && which < visibleResults.size()) bind(visibleResults.get(which));
-                })
-                .setNegativeButton("Cancel", (dialog, which) -> finishScanAndReconnect())
-                .create();
-        scanDialog.setOnDismissListener(dialog -> stopScanOnly());
-        scanDialog.show();
-        selectButton.setEnabled(false);
-        status("Searching…", true);
-
-        main.postDelayed(() -> {
-            if (scanMode) startActualScan();
-        }, 700);
-    }
-
-    @SuppressLint("MissingPermission")
-    private void startActualScan() {
-        scanner = adapter.getBluetoothLeScanner();
-        if (scanner == null) {
-            finishScanAndReconnect();
-            status("Bluetooth scanner is unavailable.", false);
-            return;
-        }
-        ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .setReportDelay(0)
-                .build();
-        try {
-            scanning = true;
-            scanner.startScan(null, settings, scanCallback);
-        } catch (Exception e) {
-            finishScanAndReconnect();
-            status("Bluetooth scan failed.", false);
-            return;
-        }
-        main.postDelayed(() -> {
-            if (scanning && scanMode) {
-                stopScanOnly();
-                status("Scan paused. Reopen Change scooter to scan again.", true);
-            }
-        }, 15000);
-    }
-
-    private final ScanCallback scanCallback = new ScanCallback() {
-        @Override public void onScanResult(int callbackType, ScanResult result) {
-            handleScanResult(result);
-        }
-
-        @Override public void onBatchScanResults(List<ScanResult> results) {
-            if (results != null) for (ScanResult r : results) handleScanResult(r);
-        }
-
-        @Override public void onScanFailed(int errorCode) {
-            main.post(() -> status("Bluetooth scan failed.", false));
-        }
-    };
-
-    @SuppressLint("MissingPermission")
-    private void handleScanResult(ScanResult result) {
-        if (result == null || result.getDevice() == null) return;
-        String name = realScanName(result);
-        if (!isNinebotName(name)) return;
-        scooterResults.put(result.getDevice().getAddress(), result);
-        main.post(this::refreshScanList);
-    }
-
-    @SuppressLint("MissingPermission")
-    private void refreshScanList() {
-        if (scanAdapter == null) return;
-        List<ScanResult> entries = new ArrayList<>(scooterResults.values());
-        entries.sort((a, b) -> Integer.compare(b.getRssi(), a.getRssi()));
-        visibleResults.clear();
-        visibleLabels.clear();
-        for (ScanResult result : entries) {
-            String name = realScanName(result);
-            if (name == null) continue;
-            visibleResults.add(result);
-            visibleLabels.add(name + "\n" + result.getDevice().getAddress());
-        }
-        scanAdapter.notifyDataSetChanged();
-    }
-
-    @SuppressLint("MissingPermission")
-    private void bind(ScanResult result) {
-        if (result == null || result.getDevice() == null) return;
-        String name = realScanName(result);
-        if (name == null) return;
-        BluetoothDevice device = result.getDevice();
-        stopScanOnly();
-        scanMode = false;
-        clearKnownState();
-        prefs.edit()
-                .putString(PREF_ADDRESS, device.getAddress())
-                .putString(PREF_NAME, name)
-                .apply();
-        refreshBoundDevice();
-        if (scanDialog != null && scanDialog.isShowing()) scanDialog.dismiss();
-        status("Connecting…", true);
-        main.postDelayed(() -> connectBoundScooter(null), 250);
-    }
-
-    @SuppressLint("MissingPermission")
-    private void stopScanOnly() {
-        if (scanning && scanner != null) {
-            try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
-        }
-        scanning = false;
-        if (selectButton != null) selectButton.setEnabled(true);
-    }
-
-    private void finishScanAndReconnect() {
-        scanMode = false;
-        stopScanOnly();
-        main.postDelayed(this::autoConnectIfPossible, 400);
-    }
-
-    @SuppressLint("MissingPermission")
-    private String realScanName(ScanResult result) {
-        ScanRecord record = result.getScanRecord();
-        if (record != null) {
-            String n = record.getDeviceName();
-            if (n != null && !n.isBlank()) return n.trim();
-        }
-        try {
-            String n = result.getDevice().getName();
-            if (n != null && !n.isBlank()) return n.trim();
-        } catch (SecurityException ignored) {}
-        return null;
-    }
-
-    private boolean isNinebotName(String name) {
-        if (name == null) return false;
-        String n = name.toLowerCase(Locale.ROOT);
-        return n.contains("nbscooter") || n.contains("ninebot") || n.contains("segway");
-    }
-
-    private void status(String text, boolean ok) {
-        main.post(() -> {
-            statusText.setText(text);
-            statusText.setTextColor(ok ? Color.rgb(45, 95, 60) : Color.rgb(165, 40, 40));
-        });
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (prefs != null) main.postDelayed(this::autoConnectIfPossible, 150);
-    }
-
-    @Override
-    protected void onDestroy() {
-        scanMode = false;
-        stopScanOnly();
-        if (client != null) client.closeSilently();
-        super.onDestroy();
-    }
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private static String f(String format, Object... args) { return String.format(Locale.US, format, args); }
 }

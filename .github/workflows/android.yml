@@ -11,18 +11,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set build version to 0.7.2
-        run: |
-          sed -i 's/versionCode = 13/versionCode = 14/' app/build.gradle.kts
-          sed -i 's/versionName = "0.7.1"/versionName = "0.7.2"/' app/build.gradle.kts
-
-      - name: Decode stable signing keystore
+      - name: Decode stable debug keystore
         run: |
           mkdir -p ci
           base64 -d ci/stable-debug-keystore.b64 > ci/ninebot-debug.keystore
@@ -44,35 +39,54 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Test SHU protocol and crypto packets
-        run: gradle --no-daemon :app:testDebugUnitTest
+      - name: Lint, tests and debug APK
+        run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 
-      - name: Build stable-signed APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Verify APK signature
+      - name: Verify stable debug signature
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.7.2.apk
+      - name: Build signed release when release key is configured
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > ci/release.keystore
+            gradle --no-daemon :app:assembleRelease
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+          else
+            echo "Release signing secrets are not configured; publishing the stable-signed debug APK."
+          fi
+
+      - name: Select publishable APK
+        run: |
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk Ninebot-scooter-blocker-v0.8.0.apk
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk Ninebot-scooter-blocker-v0.8.0.apk
+          fi
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ninebot-scooter-blocker-v0.7.2-apk
-          path: Ninebot-scooter-blocker-v0.7.2.apk
+          name: Ninebot-scooter-blocker-v0.8.0-apk
+          path: Ninebot-scooter-blocker-v0.8.0.apk
           if-no-files-found: error
 
-      - name: Publish v0.7.2 release APK
+      - name: Publish v0.8.0 release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.7.2 >/dev/null 2>&1; then
-            gh release upload v0.7.2 Ninebot-scooter-blocker-v0.7.2.apk --clobber
+          NOTES='Ninebot Max G30 companion release. Preserves the known-good SHU 2.7 authentication and lock/unlock transport; adds centralized BLE/repository architecture, read-only live telemetry, foreground connection service, persistent battery notification with lock/unlock actions, remembered-scooter serial verification, throttled telemetry polling and 1/2/5/10/30 second reconnect backoff. Existing G30 lock/unlock path remains the hardware-tested compatibility baseline; new telemetry should be validated on the same scooter.'
+          if gh release view v0.8.0 >/dev/null 2>&1; then
+            gh release upload v0.8.0 Ninebot-scooter-blocker-v0.8.0.apk --clobber
+            gh release edit v0.8.0 --notes "$NOTES"
           else
-            gh release create v0.7.2 Ninebot-scooter-blocker-v0.7.2.apk \
+            gh release create v0.8.0 Ninebot-scooter-blocker-v0.8.0.apk \
               --target "${GITHUB_SHA}" \
-              --title "Ninebot Scooter Blocker v0.7.2" \
-              --notes "Keeps the known-good v0.6.0 SHU transport and fixes the lock UI so connection state no longer disables the toggle. The lock/unlock request can be queued while Bluetooth authentication is still in progress. The card shows only lock state; connection/authentication text is separate below it. Scooter scanning remains restricted to real advertised NBScooter/Ninebot/Segway names."
+              --title "Ninebot Scooter Blocker v0.8.0" \
+              --notes "$NOTES"
           fi
