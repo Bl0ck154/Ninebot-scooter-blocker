@@ -18,16 +18,15 @@ import java.util.Arrays;
 import java.util.UUID;
 
 /**
- * One-scooter BLE client reproducing ScooterHacking Utility 2.7's
- * NinebotCrypto pairing path for G30/NBScooter devices.
+ * Stable transport based on the known-good v0.6.0 SHU 2.7 NinebotCrypto path.
+ * v0.7.1 deliberately does NOT perform register 0x1D status reads.
  */
 public final class NinebotBleClient {
     public interface Listener {
         void onStatus(String status);
         void onReady();
-        void onLockState(boolean locked);
-        void onActionResult(boolean success, Boolean locked, String message);
         void onDisconnected(String reason);
+        void onActionResult(boolean success, Boolean locked, String message);
     }
 
     private static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
@@ -55,12 +54,8 @@ public final class NinebotBleClient {
     private boolean firstPairTriggerSent;
     private boolean pairingPromptShown;
 
-    private Boolean lockState;
-    private boolean stateReadInFlight;
     private Boolean pendingDesiredLock;
-    private boolean pendingToggle;
     private Boolean requestedLocked;
-    private int verifyAttempts;
 
     private final Runnable connectionTimeout = () -> {
         if (!cancelled && !ready) {
@@ -71,7 +66,7 @@ public final class NinebotBleClient {
     private final Runnable initRetry = new Runnable() {
         @Override public void run() {
             if (cancelled || ready || initAccepted || rx == null) return;
-            status("Connecting…");
+            status("Authenticating…");
             sendEncrypted(ShuNinebotProtocol.initPacket());
             main.postDelayed(this, 900);
         }
@@ -108,34 +103,12 @@ public final class NinebotBleClient {
         }
     };
 
-    private final Runnable stateReadTimeout = () -> {
-        if (cancelled || !stateReadInFlight) return;
-        stateReadInFlight = false;
-        if (pendingToggle) {
-            pendingToggle = false;
-            listener.onActionResult(false, lockState, "Couldn't read the scooter lock state.");
-        } else if (pendingDesiredLock != null) {
-            Boolean desired = pendingDesiredLock;
-            pendingDesiredLock = null;
-            sendSetLocked(desired);
-        } else {
-            status("Connected, but lock status is unavailable.");
-        }
-    };
-
-    private final Runnable actionTimeout = () -> {
-        if (cancelled || requestedLocked == null) return;
-        Boolean expected = requestedLocked;
-        requestedLocked = null;
-        listener.onActionResult(false, lockState,
-                expected ? "Lock command was sent, but the final state could not be verified."
-                        : "Unlock command was sent, but the final state could not be verified.");
-    };
-
-    private final Runnable verifyAction = new Runnable() {
-        @Override public void run() {
-            if (cancelled || requestedLocked == null || !isReady()) return;
-            requestLockState();
+    private final Runnable actionComplete = () -> {
+        if (!cancelled && requestedLocked != null) {
+            Boolean completed = requestedLocked;
+            requestedLocked = null;
+            listener.onActionResult(true, completed,
+                    completed ? "Scooter locked." : "Scooter unlocked.");
         }
     };
 
@@ -146,10 +119,6 @@ public final class NinebotBleClient {
 
     public boolean isReady() {
         return ready && gatt != null && rx != null;
-    }
-
-    public Boolean getLockState() {
-        return lockState;
     }
 
     @SuppressLint("MissingPermission")
@@ -163,13 +132,9 @@ public final class NinebotBleClient {
         pairAccepted = false;
         firstPairTriggerSent = false;
         pairingPromptShown = false;
-        serial = null;
-        lockState = null;
-        stateReadInFlight = false;
         pendingDesiredLock = null;
-        pendingToggle = false;
         requestedLocked = null;
-        verifyAttempts = 0;
+        serial = null;
         writeQueue.clear();
         receiveBuffer.reset();
 
@@ -188,32 +153,15 @@ public final class NinebotBleClient {
         }
     }
 
-    /** Set a desired state as soon as the authenticated connection is ready. */
+    /** Send LOCK or UNLOCK as soon as the known-good SHU authentication is ready. */
     public void setLockedWhenReady(boolean locked) {
         if (cancelled) return;
-        pendingToggle = false;
         pendingDesiredLock = locked;
         if (!isReady()) {
             status("Connecting…");
             return;
         }
-        resolvePendingAction();
-    }
-
-    /** Read the real state and switch it to the opposite value. Used by the home shortcut. */
-    public void toggleWhenReady() {
-        if (cancelled) return;
-        pendingDesiredLock = null;
-        pendingToggle = true;
-        if (!isReady()) {
-            status("Connecting…");
-            return;
-        }
-        requestLockState();
-    }
-
-    public void refreshLockState() {
-        if (isReady()) requestLockState();
+        sendPendingAction();
     }
 
     @SuppressLint("MissingPermission")
@@ -231,9 +179,7 @@ public final class NinebotBleClient {
         cancelled = true;
         ready = false;
         writeInFlight = false;
-        stateReadInFlight = false;
         pendingDesiredLock = null;
-        pendingToggle = false;
         requestedLocked = null;
         writeQueue.clear();
         receiveBuffer.reset();
@@ -241,9 +187,7 @@ public final class NinebotBleClient {
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
-        main.removeCallbacks(stateReadTimeout);
-        main.removeCallbacks(actionTimeout);
-        main.removeCallbacks(verifyAction);
+        main.removeCallbacks(actionComplete);
 
         BluetoothGatt old = gatt;
         gatt = null;
@@ -280,7 +224,7 @@ public final class NinebotBleClient {
 
             BluetoothGattService service = g.getService(UART_SERVICE);
             if (service == null) {
-                failConnection("This scooter does not expose the expected Ninebot service.");
+                failConnection("Ninebot Bluetooth service not found.");
                 return;
             }
             rx = service.getCharacteristic(UART_RX);
@@ -363,7 +307,10 @@ public final class NinebotBleClient {
                 if (remainder.length == 0) return;
             }
         } catch (Exception e) {
-            failConnection("Scooter response could not be decoded.");
+            // Authentication responses must decode. Once ready, ignore unexpected/unsolicited
+            // notifications instead of destroying the working v0.6 connection.
+            receiveBuffer.reset();
+            if (!ready) failConnection("Scooter response could not be decoded.");
         }
     }
 
@@ -405,30 +352,15 @@ public final class NinebotBleClient {
             return;
         }
 
-        Boolean reportedState = ShuNinebotProtocol.lockStateFromResponse(packet);
-        if (reportedState != null) {
-            stateReadInFlight = false;
-            main.removeCallbacks(stateReadTimeout);
-            lockState = reportedState;
-            listener.onLockState(reportedState);
-
-            if (requestedLocked != null) {
-                if (requestedLocked.equals(reportedState)) {
-                    Boolean completed = requestedLocked;
-                    requestedLocked = null;
-                    main.removeCallbacks(actionTimeout);
-                    main.removeCallbacks(verifyAction);
-                    status(completed ? "Locked" : "Unlocked");
-                    listener.onActionResult(true, completed, completed ? "Scooter locked." : "Scooter unlocked.");
-                } else if (verifyAttempts < 4) {
-                    verifyAttempts++;
-                    main.removeCallbacks(verifyAction);
-                    main.postDelayed(verifyAction, 350);
-                }
-                return;
+        if (requestedLocked != null) {
+            int expectedReg = requestedLocked ? ShuNinebotProtocol.REG_LOCK : ShuNinebotProtocol.REG_UNLOCK;
+            if (index == expectedReg && (command == 0x02 || command == 0x05 || command == 0x32)) {
+                Boolean completed = requestedLocked;
+                requestedLocked = null;
+                main.removeCallbacks(actionComplete);
+                listener.onActionResult(true, completed,
+                        completed ? "Scooter locked." : "Scooter unlocked.");
             }
-
-            resolvePendingAction();
         }
     }
 
@@ -439,62 +371,20 @@ public final class NinebotBleClient {
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
-        status("Checking lock status…");
+        status("Connected");
         listener.onReady();
-        requestLockState();
+        sendPendingAction();
     }
 
-    private void resolvePendingAction() {
-        if (!isReady()) return;
-        if (pendingToggle) {
-            if (lockState == null) {
-                requestLockState();
-                return;
-            }
-            boolean desired = !lockState;
-            pendingToggle = false;
-            sendSetLocked(desired);
-            return;
-        }
-
-        if (pendingDesiredLock != null) {
-            if (lockState == null) {
-                requestLockState();
-                return;
-            }
-            boolean desired = pendingDesiredLock;
-            pendingDesiredLock = null;
-            if (lockState == desired) {
-                status(desired ? "Locked" : "Unlocked");
-                listener.onActionResult(true, desired,
-                        desired ? "Scooter is already locked." : "Scooter is already unlocked.");
-            } else {
-                sendSetLocked(desired);
-            }
-        }
-    }
-
-    private void requestLockState() {
-        if (!isReady() || stateReadInFlight) return;
-        stateReadInFlight = true;
-        sendEncrypted(ShuNinebotProtocol.readLockStatePacket());
-        main.removeCallbacks(stateReadTimeout);
-        main.postDelayed(stateReadTimeout, 1200);
-    }
-
-    private void sendSetLocked(boolean locked) {
-        if (!isReady()) {
-            pendingDesiredLock = locked;
-            return;
-        }
-        requestedLocked = locked;
-        verifyAttempts = 0;
-        status(locked ? "Locking…" : "Unlocking…");
-        sendEncrypted(locked ? ShuNinebotProtocol.lockPacket() : ShuNinebotProtocol.unlockPacket());
-        main.removeCallbacks(actionTimeout);
-        main.postDelayed(actionTimeout, 3200);
-        main.removeCallbacks(verifyAction);
-        main.postDelayed(verifyAction, 500);
+    private void sendPendingAction() {
+        if (!isReady() || pendingDesiredLock == null || requestedLocked != null) return;
+        boolean desired = pendingDesiredLock;
+        pendingDesiredLock = null;
+        requestedLocked = desired;
+        status(desired ? "Locking…" : "Unlocking…");
+        sendEncrypted(desired ? ShuNinebotProtocol.lockPacket() : ShuNinebotProtocol.unlockPacket());
+        main.removeCallbacks(actionComplete);
+        main.postDelayed(actionComplete, 700);
     }
 
     private void sendEncrypted(byte[] plainPacket) {
