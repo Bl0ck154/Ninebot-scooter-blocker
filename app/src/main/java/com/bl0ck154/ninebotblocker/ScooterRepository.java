@@ -19,6 +19,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     public static final String PREF_LOCK_STATE = "lock_state";
     public static final String PREF_AUTO_CONNECT = "auto_connect";
     public static final String PREF_PERSISTENT = "persistent_notification";
+    public static final String PREF_FULL_CHARGE_ALERT = "full_charge_alert";
 
     public interface Listener { void onSnapshot(Snapshot snapshot); }
     public interface DiscoveryListener {
@@ -31,20 +32,25 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         public final ScooterConnectionState connectionState;
         public final ScooterTelemetry telemetry;
         public final String deviceName;
+        public final String modelName;
         public final String address;
         public final String status;
         public final boolean autoConnect;
         public final boolean persistent;
+        public final boolean fullChargeAlert;
 
         Snapshot(ScooterConnectionState state, ScooterTelemetry telemetry, String name,
-                 String address, String status, boolean autoConnect, boolean persistent) {
+                 String modelName, String address, String status, boolean autoConnect,
+                 boolean persistent, boolean fullChargeAlert) {
             this.connectionState = state;
             this.telemetry = telemetry;
             this.deviceName = name;
+            this.modelName = modelName;
             this.address = address;
             this.status = status;
             this.autoConnect = autoConnect;
             this.persistent = persistent;
+            this.fullChargeAlert = fullChargeAlert;
         }
     }
 
@@ -81,7 +87,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private ScooterRepository(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         ble = new ScooterBleManager(context, this);
-        if (prefs.getBoolean(PREF_LOCK_KNOWN, false)) telemetry.setLocked(prefs.getBoolean(PREF_LOCK_STATE, false));
+        if (prefs.getBoolean(PREF_LOCK_KNOWN, false)) {
+            telemetry.setLocked(prefs.getBoolean(PREF_LOCK_STATE, false));
+        }
     }
 
     public void addListener(Listener listener) {
@@ -89,28 +97,36 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         listeners.addIfAbsent(listener);
         listener.onSnapshot(snapshot());
     }
+
     public void removeListener(Listener listener) { listeners.remove(listener); }
+
     public Snapshot snapshot() {
-        return new Snapshot(state, telemetry.copy(), deviceName(), address(), status,
-                isAutoConnectEnabled(), isPersistentEnabled());
+        String name = deviceName();
+        return new Snapshot(state, telemetry.copy(), name,
+                ScooterIdentity.displayModel(name, prefs.getString(PREF_SERIAL, null)),
+                address(), status, isAutoConnectEnabled(), isPersistentEnabled(),
+                isFullChargeAlertEnabled());
     }
 
     public boolean hasRememberedScooter() { return address() != null; }
     public boolean isAutoConnectEnabled() { return prefs.getBoolean(PREF_AUTO_CONNECT, true); }
     public boolean isPersistentEnabled() { return prefs.getBoolean(PREF_PERSISTENT, false); }
+    public boolean isFullChargeAlertEnabled() { return prefs.getBoolean(PREF_FULL_CHARGE_ALERT, false); }
     public String address() { return prefs.getString(PREF_ADDRESS, null); }
+
     public String deviceName() {
         String value = prefs.getString(PREF_NAME, null);
-        return value == null || value.trim().isEmpty() ? "Ninebot Max G30" : value;
+        return value == null || value.trim().isEmpty() ? "Ninebot / Segway scooter" : value;
     }
 
     public void setUiActive(boolean active) {
         uiActive = active;
         if (active) {
             if (isAutoConnectEnabled()) connectIfNeeded();
-        } else if (!isPersistentEnabled()) {
+        } else if (!isPersistentEnabled() && !isFullChargeAlertEnabled()) {
             stopPolling();
             ble.disconnectSilently();
+            telemetry.setConnected(false);
             setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
         }
     }
@@ -125,14 +141,23 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     public void setPersistentEnabled(boolean enabled) {
         prefs.edit().putBoolean(PREF_PERSISTENT, enabled).apply();
         if (enabled) connectIfNeeded();
-        else if (!uiActive) {
-            cancelReconnect();
-            stopPolling();
-            ble.disconnectSilently();
-            telemetry.setConnected(false);
-            setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
-        }
+        else if (!uiActive && !isFullChargeAlertEnabled()) disconnectWhenIdle();
         notifyListeners();
+    }
+
+    public void setFullChargeAlertEnabled(boolean enabled) {
+        prefs.edit().putBoolean(PREF_FULL_CHARGE_ALERT, enabled).apply();
+        if (enabled) connectIfNeeded();
+        else if (!uiActive && !isPersistentEnabled()) disconnectWhenIdle();
+        notifyListeners();
+    }
+
+    private void disconnectWhenIdle() {
+        cancelReconnect();
+        stopPolling();
+        ble.disconnectSilently();
+        telemetry.setConnected(false);
+        setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
     }
 
     public void connectIfNeeded() {
@@ -155,6 +180,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     public void lockScooter() { requestLocked(true); }
     public void unlockScooter() { requestLocked(false); }
+
     public void toggleScooter() {
         Boolean locked = telemetry.getLocked();
         requestLocked(locked == null || !locked);
@@ -191,7 +217,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         ble.disconnectSilently();
         identityVerified = false;
         ble.startScan(false, 10000, new ScooterBleManager.ScanListener() {
-            @Override public void onDeviceFound(String address, String name, int rssi) { listener.onDevice(address, name, rssi); }
+            @Override public void onDeviceFound(String address, String name, int rssi) {
+                listener.onDevice(address, name, rssi);
+            }
             @Override public void onScanFinished() {
                 setState(ScooterConnectionState.DISCONNECTED, "Search finished");
                 listener.onFinished();
@@ -223,7 +251,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         notifyListeners();
     }
 
-    @Override public void onConnectionState(ScooterConnectionState newState, String message) { setState(newState, message); }
+    @Override public void onConnectionState(ScooterConnectionState newState, String message) {
+        setState(newState, message);
+    }
 
     @Override public void onReady(byte[] serialBytes) {
         String incomingSerial = serialString(serialBytes);
@@ -233,7 +263,8 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             identityVerified = false;
             telemetry.setConnected(false);
             ble.disconnectSilently();
-            setState(ScooterConnectionState.ERROR, "A different Ninebot answered; reconnecting to your saved G30");
+            setState(ScooterConnectionState.ERROR,
+                    "A different Ninebot answered; reconnecting to your saved scooter");
             scheduleReconnect();
             return;
         }
@@ -245,6 +276,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         cancelReconnect();
         telemetry.setConnected(true);
         setState(ScooterConnectionState.READY, "Connected");
+
+        // Read the actual boolean state immediately so UI/notification do not rely on stale local state.
+        ble.send(G30Protocol.readLockStatus());
         startPolling();
         sendPendingAction();
     }
@@ -256,7 +290,10 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     @Override public void onActionResult(boolean success, Boolean locked, String message) {
         if (success && locked != null) {
             telemetry.setLocked(locked);
-            prefs.edit().putBoolean(PREF_LOCK_KNOWN, true).putBoolean(PREF_LOCK_STATE, locked).apply();
+            prefs.edit()
+                    .putBoolean(PREF_LOCK_KNOWN, true)
+                    .putBoolean(PREF_LOCK_STATE, locked)
+                    .apply();
         }
         status = message == null ? (success ? "Done" : "Command failed") : message;
         notifyListeners();
@@ -267,11 +304,16 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         telemetry.setConnected(false);
         stopPolling();
         status = reason == null ? "Disconnected" : reason;
-        if (shouldStayConnected() && isAutoConnectEnabled() && hasRememberedScooter()) scheduleReconnect();
-        else setState(ScooterConnectionState.DISCONNECTED, status);
+        if (shouldStayConnected() && isAutoConnectEnabled() && hasRememberedScooter()) {
+            scheduleReconnect();
+        } else {
+            setState(ScooterConnectionState.DISCONNECTED, status);
+        }
     }
 
-    private boolean shouldStayConnected() { return uiActive || isPersistentEnabled() || pendingDesiredLock != null; }
+    private boolean shouldStayConnected() {
+        return uiActive || isPersistentEnabled() || isFullChargeAlertEnabled() || pendingDesiredLock != null;
+    }
 
     private void scheduleReconnect() {
         if (!shouldStayConnected() || !isAutoConnectEnabled() || !hasRememberedScooter()) return;
@@ -298,7 +340,8 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             @Override public void onDeviceFound(String foundAddress, String foundName, int rssi) {
                 if (matched) return;
                 boolean addressMatch = savedAddress != null && savedAddress.equalsIgnoreCase(foundAddress);
-                boolean nameMatch = savedName != null && !savedName.trim().isEmpty() && savedName.equals(foundName);
+                boolean nameMatch = savedName != null && !savedName.trim().isEmpty()
+                        && savedName.equals(foundName);
                 if (!addressMatch && !nameMatch) return;
                 matched = true;
                 ble.stopScan();
@@ -317,8 +360,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         pollTick = 0;
         fastPollIndex = 0;
         slowPollIndex = 0;
-        main.post(pollRunnable);
+        main.postDelayed(pollRunnable, 250L);
     }
+
     private void stopPolling() { main.removeCallbacks(pollRunnable); }
 
     private void pollOnce() {
@@ -334,11 +378,12 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
                 default: packet = G30Protocol.readBatteryTemperature(); break;
             }
         } else {
-            switch (fastPollIndex++ % 4) {
+            switch (fastPollIndex++ % 5) {
                 case 0: packet = G30Protocol.readBatteryPercent(); break;
                 case 1: packet = G30Protocol.readSpeed(); break;
                 case 2: packet = G30Protocol.readBatteryCurrent(); break;
-                default: packet = G30Protocol.readBatteryVoltage(); break;
+                case 3: packet = G30Protocol.readBatteryVoltage(); break;
+                default: packet = G30Protocol.readLockStatus(); break;
             }
         }
         ble.send(packet);
