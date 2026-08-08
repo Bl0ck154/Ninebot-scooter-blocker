@@ -83,6 +83,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private ScooterConnectionState state = ScooterConnectionState.DISCONNECTED;
     private String status = "Disconnected";
     private boolean uiActive;
+    private int uiActiveClients;
     private boolean identityVerified;
     private int reconnectAttempt;
     private int pollTick;
@@ -178,10 +179,14 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     public void setUiActive(boolean active) {
-        uiActive = active;
-        if (active) {
+        boolean wasActive = uiActive;
+        if (active) uiActiveClients++;
+        else if (uiActiveClients > 0) uiActiveClients--;
+        uiActive = uiActiveClients > 0;
+
+        if (uiActive && !wasActive) {
             if (isAutoConnectEnabled()) connectIfNeeded();
-        } else if (!isPersistentEnabled() && !isFullChargeAlertEnabled()) {
+        } else if (!uiActive && wasActive && !isPersistentEnabled() && !isFullChargeAlertEnabled()) {
             stopPolling();
             cancelReconnect();
             ble.disconnectSilently();
@@ -356,7 +361,6 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         rideStats.onConnected(scooterKey());
         setState(ScooterConnectionState.READY, "Connected");
 
-        // Prime the statistics baseline immediately instead of waiting for the slow polling lane.
         ble.send(G30Protocol.readOdometer());
         ble.send(G30Protocol.readBatteryPercent());
         ble.send(G30Protocol.readLockStatus());
