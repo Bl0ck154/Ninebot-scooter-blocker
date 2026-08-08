@@ -13,7 +13,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.GestureDetector;
-import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
@@ -44,7 +43,6 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private static final int MUTED = Color.rgb(102, 112, 133);
     private static final int BORDER = Color.rgb(226, 232, 240);
     private static final int ACCENT = Color.rgb(0, 126, 121);
-    private static final int ACCENT_SOFT = Color.rgb(229, 247, 245);
 
     private ScooterRepository repository;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -203,7 +201,10 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
                 return false;
             }
         });
-        scroll.setOnTouchListener((v, event) -> gesture.onTouchEvent(event));
+        scroll.setOnTouchListener((v, event) -> {
+            gesture.onTouchEvent(event);
+            return false;
+        });
 
         setContentView(scroll);
         if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
