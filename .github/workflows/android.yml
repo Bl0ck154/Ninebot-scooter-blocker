@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Notification behavior cleanup: live notification now starts automatically only after the scooter reaches READY, disappears when the live connection is lost, and no longer starts just because the OFF toggle is pressed. Turning Persistent notification off also disables Full-charge sound alert without disconnecting an open dashboard session. Removes duplicate lock-status chips/text and old expanded notification actions; the only lock indicator is the compact lock/unlock button. Notification text now prioritizes Connected plus useful telemetry.'
+          NOTES='Reconnect reliability fix: reconnect now tries the remembered BLE address directly before falling back to discovery, reconnect discovery accepts the remembered device even when its advertisement has no Ninebot name, and reconnect scans use BALANCED mode instead of a short LOW_POWER window. A 12-second watchdog resets stuck GATT attempts, and reopening the dashboard immediately kicks a delayed reconnect instead of remaining stuck on RECONNECTING. Existing G30 authentication, telemetry and lock/unlock packets are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
