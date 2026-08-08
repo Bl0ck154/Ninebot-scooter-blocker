@@ -8,6 +8,8 @@ public class G30ProtocolTest {
     @Test public void readPacketsKeepKnown5aa5Shape() {
         assertArrayEquals(new byte[]{0x5A, (byte) 0xA5, 0x01, 0x3E, 0x20, 0x01, (byte) 0xB4, 0x02},
                 G30Protocol.readBatteryPercent());
+        assertArrayEquals(new byte[]{0x5A, (byte) 0xA5, 0x01, 0x3E, 0x20, 0x01, (byte) 0xB2, 0x02},
+                G30Protocol.readLockStatus());
         assertArrayEquals(new byte[]{0x5A, (byte) 0xA5, 0x01, 0x3E, 0x22, 0x01, 0x34, 0x02},
                 G30Protocol.readBatteryVoltage());
         assertArrayEquals(ShuNinebotProtocol.lockPacket(), G30Protocol.lockPacket());
@@ -29,6 +31,14 @@ public class G30ProtocolTest {
         assertEquals(58.5, t.getRemainingRange(), 0.001);
         assertEquals(31.5, t.getControllerTemperature(), 0.001);
         assertEquals(12_481.0, t.getTotalDistance(), 0.001);
+    }
+
+    @Test public void parsesRealLockBitFromBooleanStateWord() {
+        ScooterTelemetry t = new ScooterTelemetry();
+        assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_STATUS, le16(0x0002)), t));
+        assertEquals(Boolean.TRUE, t.getLocked());
+        assertTrue(G30Protocol.applyTelemetryPacket(response(G30Protocol.REG_STATUS, le16(0x0000)), t));
+        assertEquals(Boolean.FALSE, t.getLocked());
     }
 
     @Test public void parsesBmsVoltageCurrentTemperatureAndPower() {
