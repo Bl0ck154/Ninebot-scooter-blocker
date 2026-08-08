@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Reconnect reliability fix: reconnect now tries the remembered BLE address directly before falling back to discovery, reconnect discovery accepts the remembered device even when its advertisement has no Ninebot name, and reconnect scans use BALANCED mode instead of a short LOW_POWER window. A 12-second watchdog resets stuck GATT attempts, and reopening the dashboard immediately kicks a delayed reconnect instead of remaining stuck on RECONNECTING. Existing G30 authentication, telemetry and lock/unlock packets are unchanged.'
+          NOTES='Notification/reconnect UX update: after an established scooter connection is lost, the ongoing notification remains visible for up to 20 minutes instead of disappearing immediately. It shows the last known range plus a red Reconnecting/Disconnected state and provides a RECONNECT button; a successful reconnect restores the normal lock/unlock control and cancels the 20-minute expiry. Connected notification telemetry now uses a stable order (speed, range, then connection state) instead of swapping between speed/range and range/trip layouts while riding or stopping. The green Connected indicator is moved to the end of the line so live telemetry gets priority.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
