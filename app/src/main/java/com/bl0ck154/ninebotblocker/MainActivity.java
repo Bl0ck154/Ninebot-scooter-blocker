@@ -51,7 +51,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
 
     private ScooterRepository repository;
-    private TextView titleText, deviceText, stateText, lockStateText, batteryPercentText, batteryText,
+    private TextView titleText, deviceText, stateText, batteryPercentText, batteryText,
             rideText, tripText, rangeText, totalText, tempText, batteryHelpButton, chargeSoundSettings;
     private Button lockButton;
     private Switch persistentSwitch, autoConnectSwitch, chargeAlertSwitch;
@@ -94,8 +94,6 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         int bottom = dp(20);
         root.setPadding(side, top, side, bottom);
 
-        // Android 15+ enforces edge-to-edge for targetSdk 35. Add the real status-bar/cutout
-        // inset so the title can never sit under the clock/camera.
         if (Build.VERSION.SDK_INT >= 35) {
             root.setOnApplyWindowInsetsListener((v, insets) -> {
                 Insets bars = insets.getInsets(
@@ -118,9 +116,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         LinearLayout chips = new LinearLayout(this);
         chips.setOrientation(LinearLayout.HORIZONTAL);
         stateText = chip("Disconnected");
-        lockStateText = chip("🔏 Checking lock");
-        chips.addView(stateText, wrapWithRight(dp(6)));
-        chips.addView(lockStateText, wrapWithRight(0));
+        chips.addView(stateText, wrapWithRight(0));
         root.addView(chips, full(dp(12)));
 
         LinearLayout hero = cardContainer();
@@ -174,13 +170,6 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         persistentSwitch = addSetting(settingsCard, "Persistent notification");
         persistentSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
             if (suppressSwitches) return;
-            if (!checked && repository.isFullChargeAlertEnabled()) {
-                Toast.makeText(this,
-                        "Full-charge alert needs the background connection. Turn that alert off first.",
-                        Toast.LENGTH_LONG).show();
-                setSwitchWithoutCallback(persistentSwitch, true);
-                return;
-            }
             if (checked && !hasNotificationPermission()) {
                 pendingChargeAlertPermission = false;
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
@@ -235,7 +224,6 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         actionRow.addView(shortcutButton, weightedWithMargins(false));
         root.addView(actionRow, full(0));
 
-        // Deliberately no duplicate bottom status line; connection and lock state live in chips above.
         setContentView(scroll);
         if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
     }
@@ -326,7 +314,6 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         stateText.setText(prettyState(snapshot.connectionState));
         styleConnectionChip(snapshot.connectionState);
-        styleLockChip(t.getLocked());
 
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
         batteryText.setText(formatBattery(t));
@@ -350,7 +337,12 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         suppressSwitches = false;
 
         chargeSoundSettings.setVisibility(snapshot.fullChargeAlert ? View.VISIBLE : View.GONE);
-        updateBatteryHelpVisibility(snapshot.persistent || snapshot.fullChargeAlert);
+        updateBatteryHelpVisibility(snapshot.persistent);
+
+        if (snapshot.persistent && snapshot.connectionState == ScooterConnectionState.READY
+                && snapshot.telemetry.isConnected() && hasNotificationPermission()) {
+            ScooterService.startForConnectedScooter(this);
+        }
     }
 
     private void styleConnectionChip(ScooterConnectionState state) {
@@ -371,22 +363,6 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         }
         stateText.setTextColor(fg);
         stateText.setBackground(rounded(bg, 99));
-    }
-
-    private void styleLockChip(Boolean locked) {
-        if (Boolean.TRUE.equals(locked)) {
-            lockStateText.setText("🔐 Locked");
-            lockStateText.setTextColor(Color.rgb(52, 64, 84));
-            lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
-        } else if (Boolean.FALSE.equals(locked)) {
-            lockStateText.setText("🔓 Unlocked");
-            lockStateText.setTextColor(ACCENT);
-            lockStateText.setBackground(rounded(ACCENT_SOFT, 99));
-        } else {
-            lockStateText.setText("🔏 Checking lock");
-            lockStateText.setTextColor(MUTED);
-            lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
-        }
     }
 
     private String formatBattery(ScooterTelemetry t) {
@@ -476,14 +452,17 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             return;
         }
         if (enabled) {
-            Intent intent = new Intent(this, ScooterService.class).setAction(ScooterService.ACTION_START);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-            else startService(intent);
+            repository.setPersistentEnabled(true);
+            repository.connectIfNeeded();
+            ScooterRepository.Snapshot snapshot = repository.snapshot();
+            if (snapshot.connectionState == ScooterConnectionState.READY
+                    && snapshot.telemetry.isConnected()) {
+                ScooterService.startForConnectedScooter(this);
+            }
         } else {
-            // Turning off the notification must not mean "disconnect" while the dashboard is open.
+            if (repository.isFullChargeAlertEnabled()) repository.setFullChargeAlertEnabled(false);
             repository.setPersistentEnabled(false);
-            startService(new Intent(this, ScooterService.class)
-                    .setAction(ScooterService.ACTION_STOP_NOTIFICATION));
+            ScooterService.stopLiveNotification(this);
         }
     }
 
@@ -491,7 +470,13 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         ScooterService.ensureNotificationChannels(this);
         repository.setFullChargeAlertEnabled(enabled);
         if (enabled) {
-            if (!repository.isPersistentEnabled()) setPersistentConnection(true);
+            if (!repository.isPersistentEnabled()) repository.setPersistentEnabled(true);
+            repository.connectIfNeeded();
+            ScooterRepository.Snapshot snapshot = repository.snapshot();
+            if (snapshot.connectionState == ScooterConnectionState.READY
+                    && snapshot.telemetry.isConnected()) {
+                ScooterService.startForConnectedScooter(this);
+            }
             Toast.makeText(this,
                     "Full-charge alert armed. It will sound when battery rises to 100%.",
                     Toast.LENGTH_LONG).show();

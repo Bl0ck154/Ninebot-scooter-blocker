@@ -64,6 +64,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         return instance;
     }
 
+    private final Context appContext;
     private final SharedPreferences prefs;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ScooterBleManager ble;
@@ -85,8 +86,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private final Runnable pollRunnable = this::pollOnce;
 
     private ScooterRepository(Context context) {
-        prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        ble = new ScooterBleManager(context, this);
+        appContext = context.getApplicationContext();
+        prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        ble = new ScooterBleManager(appContext, this);
         if (prefs.getBoolean(PREF_LOCK_KNOWN, false)) {
             telemetry.setLocked(prefs.getBoolean(PREF_LOCK_STATE, false));
         }
@@ -277,10 +279,13 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         telemetry.setConnected(true);
         setState(ScooterConnectionState.READY, "Connected");
 
-        // Read the actual boolean state immediately so UI/notification do not rely on stale local state.
         ble.send(G30Protocol.readLockStatus());
         startPolling();
         sendPendingAction();
+
+        if (isPersistentEnabled() || isFullChargeAlertEnabled()) {
+            ScooterService.startForConnectedScooter(appContext);
+        }
     }
 
     @Override public void onPacket(byte[] packet) {

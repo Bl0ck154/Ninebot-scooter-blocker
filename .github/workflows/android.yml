@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Live scooter companion update: fixes Android 15+ top insets, reads actual Ninebot lock state from the read-only boolean status register, keeps BLE connected when only the persistent-notification toggle is turned off, adds an always-visible compact lock control in the foreground notification, raises the live notification channel priority, adds separate configurable full-charge sound alerts, and makes the dashboard title model-aware. G30 remains the hardware-tested baseline; compatible legacy Ninebot Proto2 scooters are experimental.'
+          NOTES='Notification behavior cleanup: live notification now starts automatically only after the scooter reaches READY, disappears when the live connection is lost, and no longer starts just because the OFF toggle is pressed. Turning Persistent notification off also disables Full-charge sound alert without disconnecting an open dashboard session. Removes duplicate lock-status chips/text and old expanded notification actions; the only lock indicator is the compact lock/unlock button. Notification text now prioritizes Connected plus useful telemetry.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"

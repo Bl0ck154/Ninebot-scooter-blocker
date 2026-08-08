@@ -6,12 +6,13 @@ Ninebot Scooter Blocker is a lightweight Android companion app built around the 
 
 - automatic BLE connection to the remembered scooter;
 - existing SHU-compatible authentication/crypto path preserved byte-for-byte for the G30 baseline;
-- lock / unlock from the app, notification, or home shortcut;
+- lock / unlock from the app, compact notification control, or home shortcut;
 - actual lock-state read from the Ninebot read-only boolean status register (`0xB2`, lock bit `0x0002`);
 - live battery percentage, voltage, current and calculated power;
 - live speed, trip, odometer, remaining range and temperatures when returned by the scooter;
-- foreground service with reconnect backoff: 1 s, 2 s, 5 s, 10 s, then 30 s;
-- persistent live notification with an always-visible compact lock/unlock control plus system actions;
+- reconnect backoff: 1 s, 2 s, 5 s, 10 s, then 30 s;
+- persistent live notification that starts when the scooter is actually connected (`READY`);
+- one always-visible compact lock/unlock control inside the collapsed notification;
 - separate high-importance **Full charge alerts** notification channel with configurable Android sound;
 - optional full-charge sound alert when a monitored battery rises to 100%;
 - model-aware dashboard title when the model can be determined from serial or advertised name;
@@ -33,19 +34,21 @@ This does **not** mean SHU-level universal support. Newer Segway/Ninebot familie
 
 ## Lock state
 
-After the connection becomes `READY`, the app immediately reads ESC quick status register `0xB2`. The Ninebot boolean state word uses bit `0x0002` for the software-lock state. The same read is periodically refreshed so app and notification state can recover after reconnect instead of depending only on the last local button press.
+After the connection becomes `READY`, the app immediately reads ESC quick status register `0xB2`. The Ninebot boolean state word uses bit `0x0002` for the software-lock state. The same read is periodically refreshed. The dashboard no longer duplicates this as a separate chip: the lock/unlock button itself is the visible lock indicator/action.
 
 ## Full-charge sound alert
 
-Enable **Full-charge sound alert** in the dashboard. Background monitoring requires the foreground connection, so the app keeps the persistent service enabled while the alert is armed.
+Enable **Full-charge sound alert** in the dashboard. Arming it also enables **Persistent notification**, because Android needs the foreground connection while monitoring the scooter. If **Persistent notification** is switched off, the charge alert is switched off with it instead of blocking the toggle.
 
 The sound is a separate Android notification channel named **Full charge alerts**. Tap **Full-charge sound settings** in the app to choose/disable the sound, vibration, or channel importance using Android's own settings. The alert fires once when the observed battery level rises to 100%; it does not fire just because the app starts while the scooter is already at 100%.
 
 ## Notification behavior
 
-The live foreground channel is intentionally silent but higher-priority than the old low-priority channel. Its compact custom content contains the lock/unlock control directly, so the primary control is visible even when Android collapses normal action buttons. Android/OEM notification ranking is ultimately controlled by the system and the user, so no app can guarantee permanent absolute position #1 in the shade.
+The live notification is silent and high-importance. It appears after the scooter reaches `READY`, shows `🟢 Connected` plus useful telemetry, and uses a single compact `🔐 LOCK` / `🔓 UNLOCK` control directly inside the collapsed notification. Duplicate lock text and the old expanded `LOCK` / `DISCONNECT` action row were removed.
 
-Turning off **Persistent notification** while the Activity is open no longer calls `disconnect()`. Explicit **DISCONNECT** in the notification still disconnects intentionally.
+When the live connection is lost, the foreground notification is removed. If the app process remains alive, the repository continues its normal reconnect backoff and starts the live notification again after the scooter becomes `READY`. Android does not permit a foreground service to run indefinitely with no notification, so a process that is fully killed by the OS while the scooter is offline cannot guarantee invisible background reconnect.
+
+Turning off **Persistent notification** while the Activity is open does not call `disconnect()`. It only disables the live notification/background mode (and also disables the dependent full-charge alert); the open dashboard BLE session can remain connected.
 
 ## Architecture
 
@@ -75,6 +78,6 @@ This app does **not** include firmware flashing, region changes, serial changes,
 
 ## Build / CI
 
-Every push to `main` runs Android lint, unit tests, a stable-signed debug APK build/signature check, optional release signing when secrets are configured, artifact upload, and GitHub Release publication. CI now reads the app version from `app/build.gradle.kts` instead of hard-coding the release tag in the workflow.
+Every push to `main` runs Android lint, unit tests, a stable-signed debug APK build/signature check, optional release signing when secrets are configured, artifact upload, and GitHub Release publication. CI reads the app version from `app/build.gradle.kts` instead of hard-coding the release tag in the workflow.
 
-Current companion release: **v0.9.0**.
+Current companion release: **v0.9.1**.
