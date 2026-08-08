@@ -1,14 +1,17 @@
 package com.bl0ck154.ninebotblocker;
 
 /**
- * G30 protocol/register layer. Authentication and lock/unlock delegate to the
+ * Legacy Ninebot/G30 register layer. Authentication and lock/unlock delegate to the
  * existing SHU implementation so the known-good byte sequence is preserved.
+ * The same quick register map is shared by several older Ninebot scooters; G30
+ * remains the hardware-tested baseline.
  */
 public final class G30Protocol {
     public static final int TARGET_BMS = 0x22;
 
     public static final int REG_RANGE = 0x25;
     public static final int REG_CONTROLLER_TEMP = 0x3E;
+    public static final int REG_STATUS = 0xB2;
     public static final int REG_BATTERY = 0xB4;
     public static final int REG_SPEED = 0xB5;
     public static final int REG_ODOMETER = 0xB7;
@@ -18,6 +21,9 @@ public final class G30Protocol {
     public static final int REG_BMS_VOLTAGE = 0x34;
     public static final int REG_BMS_TEMP = 0x35;
 
+    // Ninebot boolean state word: NB_BOOLMARK_LOCK.
+    private static final int STATUS_LOCKED_MASK = 0x0002;
+
     private G30Protocol() {}
 
     public static byte[] initPacket() { return ShuNinebotProtocol.initPacket(); }
@@ -26,6 +32,7 @@ public final class G30Protocol {
     public static byte[] lockPacket() { return ShuNinebotProtocol.lockPacket(); }
     public static byte[] unlockPacket() { return ShuNinebotProtocol.unlockPacket(); }
 
+    public static byte[] readLockStatus() { return readEsc(REG_STATUS, 2); }
     public static byte[] readBatteryPercent() { return readEsc(REG_BATTERY, 2); }
     public static byte[] readSpeed() { return readEsc(REG_SPEED, 2); }
     public static byte[] readOdometer() { return readEsc(REG_ODOMETER, 4); }
@@ -65,6 +72,12 @@ public final class G30Protocol {
         int index = ShuNinebotProtocol.index(packet);
         byte[] payload = ShuNinebotProtocol.payload(packet);
         switch (index) {
+            case REG_STATUS: {
+                if (payload.length < 2) return false;
+                int flags = u16(payload, 0);
+                telemetry.setLocked((flags & STATUS_LOCKED_MASK) != 0);
+                return true;
+            }
             case REG_BATTERY: {
                 if (payload.length < 2) return false;
                 int value = u16(payload, 0);
@@ -91,7 +104,6 @@ public final class G30Protocol {
             }
             case REG_RANGE: {
                 if (payload.length < 2) return false;
-                // G30/Segway remaining range is encoded in 10 m units.
                 double value = u16(payload, 0) / 100.0;
                 if (value < 0.0 || value > 200.0) return false;
                 telemetry.setRemainingRange(value);
