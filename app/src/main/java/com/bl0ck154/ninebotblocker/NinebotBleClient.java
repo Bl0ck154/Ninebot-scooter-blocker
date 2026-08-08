@@ -189,7 +189,9 @@ public final class NinebotBleClient {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 main.post(listener::onTransportConnected);
                 status("Connecting…");
-                try { g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH); } catch (Exception ignored) {}
+                // Keep Android's normal BLE connection parameters. The app only exchanges tiny
+                // control/telemetry packets, so forcing HIGH and then BALANCED priority buys
+                // little while adding a connection-parameter renegotiation during scooter wake.
                 if (!g.discoverServices()) failConnection("Could not open scooter Bluetooth services.");
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) failConnection("Scooter disconnected.");
         }
@@ -305,7 +307,6 @@ public final class NinebotBleClient {
         main.post(() -> listener.onPacket(safeCopy));
     }
 
-    @SuppressLint("MissingPermission")
     private void markReady() {
         if (ready) return;
         ready = true;
@@ -313,9 +314,6 @@ public final class NinebotBleClient {
         main.removeCallbacks(initRetry);
         main.removeCallbacks(pingRetry);
         main.removeCallbacks(pairRetry);
-        if (gatt != null) {
-            try { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED); } catch (Exception ignored) {}
-        }
         status("Connected");
         listener.onReady();
         sendPendingAction();
