@@ -10,8 +10,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
@@ -36,6 +34,7 @@ import java.util.Locale;
 public final class StatsActivity extends Activity implements ScooterRepository.Listener {
     private static final int REQ_EXPORT = 91;
     private static final int REQ_IMPORT = 92;
+    private static final long SUMMARY_REFRESH_MS = 5000L;
 
     private static final int BG = Color.rgb(245, 247, 250);
     private static final int CARD = Color.WHITE;
@@ -45,21 +44,14 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private static final int ACCENT = Color.rgb(0, 126, 121);
 
     private ScooterRepository repository;
-    private final Handler main = new Handler(Looper.getMainLooper());
     private int selectedPeriod = RideStatsTracker.PERIOD_DAY;
+    private long lastSummaryRefreshAt;
 
     private TextView modelText, connectionText, currentDistance, currentMeta,
             summaryDistance, summaryRides, summaryTime, summarySpeed,
             summaryUsed, summaryCharged, recentText;
     private Button dayButton, weekButton, monthButton, endRideButton,
             continueButton, pauseButton;
-
-    private final Runnable ticker = new Runnable() {
-        @Override public void run() {
-            render(repository.snapshot());
-            main.postDelayed(this, 1000L);
-        }
-    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -73,13 +65,12 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
 
     @Override protected void onStart() {
         super.onStart();
+        lastSummaryRefreshAt = 0L;
         repository.addListener(this);
         repository.setUiActive(true);
-        main.post(ticker);
     }
 
     @Override protected void onStop() {
-        main.removeCallbacks(ticker);
         repository.removeListener(this);
         repository.setUiActive(false);
         super.onStop();
@@ -211,10 +202,10 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     }
 
     @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) {
-        runOnUiThread(() -> render(snapshot));
+        runOnUiThread(() -> render(snapshot, false));
     }
 
-    private void render(ScooterRepository.Snapshot snapshot) {
+    private void render(ScooterRepository.Snapshot snapshot, boolean forceSummary) {
         modelText.setText(snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName);
         boolean connected = snapshot.connectionState == ScooterConnectionState.READY && snapshot.telemetry.isConnected();
         connectionText.setText(connected ? "🟢 Connected" : "🔴 " + prettyState(snapshot.connectionState));
@@ -227,7 +218,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
             currentMeta.setText("No active ride");
             endRideButton.setVisibility(View.GONE);
         } else {
-            currentDistance.setText(f("%.2f km", ride.distanceKm));
+            currentDistance.setText(f("%.2f km", stats.currentDistanceKm()));
             String battery = batteryDelta(ride);
             currentMeta.setText(formatDuration(ride.elapsedMs(System.currentTimeMillis()))
                     + "  ·  " + battery + "  ·  max " + f("%.1f km/h", ride.maxSpeedKmh));
@@ -236,6 +227,14 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         continueButton.setVisibility(stats != null && stats.canContinuePrevious ? View.VISIBLE : View.GONE);
         pauseButton.setText("Ride pause timeout: " + (stats == null ? 20 : stats.pauseMinutes) + " min  ›");
 
+        long now = System.currentTimeMillis();
+        if (forceSummary || now - lastSummaryRefreshAt >= SUMMARY_REFRESH_MS) {
+            refreshSummary();
+            lastSummaryRefreshAt = now;
+        }
+    }
+
+    private void refreshSummary() {
         RideStatsStore.PeriodSummary period = repository.periodStats(selectedPeriod);
         summaryDistance.setText(f("%.2f km", period.distanceKm));
         summaryRides.setText(String.valueOf(period.rides));
@@ -243,7 +242,6 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         summarySpeed.setText(f("%.1f km/h", period.maxSpeedKmh));
         summaryUsed.setText(f("-%.0f%%", period.dischargedPercent));
         summaryCharged.setText(f("+%.0f%%", period.chargedPercent));
-
         updatePeriodButtons();
         renderRecent(repository.recentRides(8));
     }
@@ -273,7 +271,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         Button b = actionButton(title, false);
         b.setOnClickListener(v -> {
             selectedPeriod = period;
-            render(repository.snapshot());
+            render(repository.snapshot(), true);
         });
         return b;
     }
@@ -336,6 +334,8 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
                         .setPositiveButton("Import", (d, w) -> {
                             try {
                                 repository.importStatisticsReplace(json.toString());
+                                lastSummaryRefreshAt = 0L;
+                                render(repository.snapshot(), true);
                                 Toast.makeText(this, "Statistics imported", Toast.LENGTH_SHORT).show();
                             } catch (Exception e) {
                                 Toast.makeText(this, "Invalid statistics backup", Toast.LENGTH_LONG).show();
