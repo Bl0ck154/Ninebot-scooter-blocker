@@ -16,6 +16,7 @@ public final class RideStatsTracker {
     public static final int DEFAULT_PAUSE_MINUTES = 20;
     private static final long CONTINUE_WINDOW_MS = 24L * 60L * 60L * 1000L;
     private static final long FRESH_BASELINE_MS = 3000L;
+    private static final long STATS_WRITE_INTERVAL_MS = 5000L;
 
     public static final int PERIOD_DAY = 0;
     public static final int PERIOD_WEEK = 1;
@@ -47,8 +48,15 @@ public final class RideStatsTracker {
     private String scooterKey;
     private boolean connected;
     private boolean suppressUntilDisconnected;
-    private long lastSampleAt;
     private long baselineUntil;
+    private long currentRideId = -1L;
+    private long lastWriteAt;
+    private Double observedOdometer;
+    private Integer observedBattery;
+    private double pendingDistance;
+    private double pendingDischarged;
+    private double pendingCharged;
+    private double pendingMaxSpeed;
 
     private final Runnable closeAfterPause = new Runnable() {
         @Override public void run() {
@@ -62,6 +70,7 @@ public final class RideStatsTracker {
                 return;
             }
             store.closeRide(open.id, open.lastSeenAt);
+            currentRideId = -1L;
         }
     };
 
@@ -79,14 +88,15 @@ public final class RideStatsTracker {
         main.removeCallbacks(closeAfterPause);
         if (!wasConnected) {
             suppressUntilDisconnected = false;
-            lastSampleAt = 0L;
-            ensureRide(System.currentTimeMillis(), null, null);
+            RideStatsStore.RideRecord ride = ensureRide(System.currentTimeMillis(), null, null);
+            adoptRide(ride);
+            lastWriteAt = System.currentTimeMillis();
         }
     }
 
     public void onDisconnected() {
+        if (connected) flushPending(System.currentTimeMillis());
         connected = false;
-        lastSampleAt = 0L;
         suppressUntilDisconnected = false;
         scheduleClose();
     }
@@ -97,37 +107,54 @@ public final class RideStatsTracker {
         long now = System.currentTimeMillis();
         RideStatsStore.RideRecord ride = ensureRide(now, telemetry.getBatteryPercent(), telemetry.getTotalDistance());
         if (ride == null) return;
+        if (ride.id != currentRideId) adoptRide(ride);
 
-        Double currentOdometer = telemetry.getTotalDistance();
-        Integer currentBattery = telemetry.getBatteryPercent();
-        double distanceDelta = 0.0;
-        double dischargedDelta = 0.0;
-        double chargedDelta = 0.0;
-
-        if (currentOdometer != null && ride.lastOdometer != null && now >= baselineUntil) {
-            double delta = currentOdometer - ride.lastOdometer;
-            // A G30 cannot legitimately gain tens of kilometres between telemetry samples.
-            // The generous 20 km cap still allows a manually continued ride after a long pause.
-            if (delta >= 0.0 && delta <= 20.0) distanceDelta = delta;
+        Double odometer = telemetry.getTotalDistance();
+        if (odometer != null) {
+            if (observedOdometer != null && now >= baselineUntil) {
+                double delta = odometer - observedOdometer;
+                if (delta >= 0.0 && delta <= 20.0) pendingDistance += delta;
+            }
+            observedOdometer = odometer;
         }
 
-        if (currentBattery != null && ride.lastBattery != null) {
-            int delta = currentBattery - ride.lastBattery;
-            if (delta < 0) dischargedDelta = -delta;
-            else if (delta > 0) chargedDelta = delta;
+        Integer battery = telemetry.getBatteryPercent();
+        if (battery != null) {
+            if (observedBattery != null) {
+                int delta = battery - observedBattery;
+                if (delta < 0) pendingDischarged += -delta;
+                else if (delta > 0) pendingCharged += delta;
+            }
+            observedBattery = battery;
         }
-
-        long connectedDelta = 0L;
-        if (lastSampleAt > 0L) {
-            long delta = now - lastSampleAt;
-            if (delta > 0L && delta <= 5000L) connectedDelta = delta;
-        }
-        lastSampleAt = now;
 
         Double speed = telemetry.getSpeed();
-        store.applySample(ride.id, key, now, currentBattery, currentOdometer,
-                distanceDelta, dischargedDelta, chargedDelta,
-                speed == null ? 0.0 : speed, connectedDelta);
+        if (speed != null) pendingMaxSpeed = Math.max(pendingMaxSpeed, Math.max(0.0, speed));
+
+        boolean meaningfulChange = pendingDistance > 0.0 || pendingDischarged > 0.0 || pendingCharged > 0.0;
+        if (meaningfulChange || now - lastWriteAt >= STATS_WRITE_INTERVAL_MS) flushPending(now);
+    }
+
+    private void flushPending(long now) {
+        if (currentRideId < 0L || scooterKey == null) return;
+        long connectedDelta = lastWriteAt <= 0L ? 0L : Math.max(0L, Math.min(10000L, now - lastWriteAt));
+        store.applySample(currentRideId, scooterKey, now, observedBattery, observedOdometer,
+                pendingDistance, pendingDischarged, pendingCharged, pendingMaxSpeed, connectedDelta);
+        pendingDistance = 0.0;
+        pendingDischarged = 0.0;
+        pendingCharged = 0.0;
+        pendingMaxSpeed = 0.0;
+        lastWriteAt = now;
+    }
+
+    private void adoptRide(RideStatsStore.RideRecord ride) {
+        currentRideId = ride == null ? -1L : ride.id;
+        observedOdometer = ride == null ? null : ride.lastOdometer;
+        observedBattery = ride == null ? null : ride.lastBattery;
+        pendingDistance = 0.0;
+        pendingDischarged = 0.0;
+        pendingCharged = 0.0;
+        pendingMaxSpeed = 0.0;
     }
 
     private RideStatsStore.RideRecord ensureRide(long now, Integer battery, Double odometer) {
@@ -136,8 +163,6 @@ public final class RideStatsTracker {
         if (open != null && now - open.lastSeenAt > pauseTimeoutMs()) {
             store.closeRide(open.id, open.lastSeenAt);
             open = null;
-            // The telemetry object can still contain pre-disconnect values. Give the immediate
-            // odometer/battery reads time to establish a fresh baseline for the new ride.
             baselineUntil = now + FRESH_BASELINE_MS;
         }
         if (open == null) {
@@ -163,6 +188,7 @@ public final class RideStatsTracker {
         if (open != null && !connected && now - open.lastSeenAt > pauseTimeoutMs()) {
             store.closeRide(open.id, open.lastSeenAt);
             open = null;
+            currentRideId = -1L;
         }
         RideStatsStore.RideRecord previous = store.lastClosedRide(key);
         boolean canContinue = previous != null && now - previous.lastSeenAt <= CONTINUE_WINDOW_MS
@@ -171,9 +197,11 @@ public final class RideStatsTracker {
     }
 
     public boolean endRideNow(String key) {
+        if (connected) flushPending(System.currentTimeMillis());
         RideStatsStore.RideRecord open = store.openRide(key);
         if (open == null) return false;
         store.closeRide(open.id, System.currentTimeMillis());
+        currentRideId = -1L;
         suppressUntilDisconnected = connected;
         main.removeCallbacks(closeAfterPause);
         return true;
@@ -181,6 +209,7 @@ public final class RideStatsTracker {
 
     public boolean continuePreviousRide(String key) {
         if (key == null) return false;
+        if (connected) flushPending(System.currentTimeMillis());
         RideStatsStore.RideRecord open = store.openRide(key);
         if (open != null && open.counted) return false;
         RideStatsStore.RideRecord previous = store.lastClosedRide(key);
@@ -189,7 +218,9 @@ public final class RideStatsTracker {
         store.reopenRide(previous.id, System.currentTimeMillis());
         scooterKey = key;
         suppressUntilDisconnected = false;
-        lastSampleAt = 0L;
+        RideStatsStore.RideRecord reopened = store.openRide(key);
+        adoptRide(reopened);
+        lastWriteAt = System.currentTimeMillis();
         return true;
     }
 
@@ -200,7 +231,7 @@ public final class RideStatsTracker {
         zeroTime(to);
         if (period == PERIOD_WEEK) {
             int day = from.get(Calendar.DAY_OF_WEEK);
-            int offset = (day + 5) % 7; // Monday = 0
+            int offset = (day + 5) % 7;
             from.add(Calendar.DAY_OF_MONTH, -offset);
             to.setTimeInMillis(from.getTimeInMillis());
             to.add(Calendar.DAY_OF_MONTH, 6);
@@ -231,12 +262,19 @@ public final class RideStatsTracker {
 
     public long pauseTimeoutMs() { return getPauseMinutes() * 60L * 1000L; }
 
-    public String exportJson() throws JSONException { return store.exportJson(); }
+    public String exportJson() throws JSONException {
+        if (connected) flushPending(System.currentTimeMillis());
+        return store.exportJson();
+    }
 
     public void importJsonReplace(String json) throws JSONException {
         store.importJsonReplace(json);
-        lastSampleAt = 0L;
+        currentRideId = -1L;
+        observedOdometer = null;
+        observedBattery = null;
+        pendingDistance = pendingDischarged = pendingCharged = pendingMaxSpeed = 0.0;
         baselineUntil = System.currentTimeMillis() + FRESH_BASELINE_MS;
+        if (connected && scooterKey != null) adoptRide(store.openRide(scooterKey));
     }
 
     private static void zeroTime(Calendar c) {
