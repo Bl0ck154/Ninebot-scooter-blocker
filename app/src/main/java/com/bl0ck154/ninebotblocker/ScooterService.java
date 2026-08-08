@@ -35,7 +35,6 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private static final int NOTIFICATION_ID = 15430;
     private static final int CHARGE_NOTIFICATION_ID = 15431;
     private static final long NOTIFICATION_THROTTLE_MS = 1500;
-    private static final long DISCONNECTED_NOTIFICATION_GRACE_MS = 20L * 60L * 1000L;
     private static volatile boolean running;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -72,9 +71,10 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 disconnectedSince = 0L;
                 return;
             }
+            long grace = notificationGraceMs();
             long elapsed = System.currentTimeMillis() - disconnectedSince;
-            if (elapsed < DISCONNECTED_NOTIFICATION_GRACE_MS) {
-                main.postDelayed(this, DISCONNECTED_NOTIFICATION_GRACE_MS - elapsed);
+            if (elapsed < grace) {
+                main.postDelayed(this, grace - elapsed);
                 return;
             }
             pendingSnapshot = null;
@@ -209,11 +209,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         if (monitoringMode && hadReadyConnection && !ready && foregroundStarted) {
-            if (disconnectedSince == 0L) {
-                disconnectedSince = System.currentTimeMillis();
-                main.removeCallbacks(disconnectExpiryRunnable);
-                main.postDelayed(disconnectExpiryRunnable, DISCONNECTED_NOTIFICATION_GRACE_MS);
-            }
+            if (disconnectedSince == 0L) disconnectedSince = System.currentTimeMillis();
+            scheduleDisconnectExpiry();
             queueNotification(snapshot, true);
             return;
         }
@@ -235,6 +232,17 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
     }
 
+    private void scheduleDisconnectExpiry() {
+        main.removeCallbacks(disconnectExpiryRunnable);
+        long remaining = Math.max(0L,
+                disconnectedSince + notificationGraceMs() - System.currentTimeMillis());
+        main.postDelayed(disconnectExpiryRunnable, remaining);
+    }
+
+    private long notificationGraceMs() {
+        return repository == null ? 20L * 60L * 1000L : repository.getRidePauseTimeoutMs();
+    }
+
     private void queueNotification(ScooterRepository.Snapshot snapshot, boolean immediate) {
         pendingSnapshot = snapshot;
         long elapsed = System.currentTimeMillis() - lastNotificationAt;
@@ -247,9 +255,13 @@ public final class ScooterService extends Service implements ScooterRepository.L
         ScooterTelemetry t = snapshot.telemetry;
         boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
         String model = snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName;
-        String title = t.getBatteryPercent() == null
-                ? "🛴 " + model
-                : "🛴 " + model + " · " + t.getBatteryPercent() + "%";
+        ArrayList<String> titleParts = new ArrayList<>();
+        titleParts.add("🛴 " + model);
+        if (t.getBatteryPercent() != null) titleParts.add(t.getBatteryPercent() + "%");
+        if (snapshot.rideStats != null && snapshot.rideStats.currentRide != null) {
+            titleParts.add(String.format(Locale.US, "%.1f km", snapshot.rideStats.currentRide.distanceKm));
+        }
+        String title = String.join(" · ", titleParts);
         String text = notificationText(snapshot);
         String actionLabel = ready
                 ? (Boolean.TRUE.equals(t.getLocked()) ? "🔓 UNLOCK" : "🔐 LOCK")
@@ -293,16 +305,10 @@ public final class ScooterService extends Service implements ScooterRepository.L
         ArrayList<String> parts = new ArrayList<>();
 
         if (ready) {
-            if (t.getSpeed() != null) parts.add(String.format(Locale.US, "%.1f km/h", t.getSpeed()));
-            if (t.getRemainingRange() != null) {
-                parts.add(String.format(Locale.US, "%.1f km range", t.getRemainingRange()));
-            }
-            if (parts.size() < 2 && t.getTripDistance() != null) {
-                parts.add(String.format(Locale.US, "%.1f km trip", t.getTripDistance()));
-            }
-            if (parts.size() < 2 && t.getBatteryVoltage() != null) {
-                parts.add(String.format(Locale.US, "%.1f V", t.getBatteryVoltage()));
-            }
+            parts.add(t.getSpeed() == null ? "— km/h"
+                    : String.format(Locale.US, "%.1f km/h", t.getSpeed()));
+            parts.add(t.getRemainingRange() == null ? "— km range"
+                    : String.format(Locale.US, "%.1f km range", t.getRemainingRange()));
             parts.add("🟢 Connected");
         } else {
             if (t.getRemainingRange() != null) {
