@@ -89,6 +89,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private int pollTick;
     private int fastPollIndex;
     private int slowPollIndex;
+    private int startupPollIndex;
     private Boolean pendingDesiredLock;
 
     private final Runnable reconnectRunnable = this::runReconnectAttempt;
@@ -361,9 +362,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         rideStats.onConnected(scooterKey());
         setState(ScooterConnectionState.READY, "Connected");
 
-        ble.send(G30Protocol.readOdometer());
-        ble.send(G30Protocol.readBatteryPercent());
-        ble.send(G30Protocol.readLockStatus());
+        // Give a freshly authenticated/woken G30 a short quiet period. v0.10.0 sent three
+        // telemetry requests immediately after READY, which is unnecessary and can make a
+        // just-woken BLE stack less stable. Startup reads are now serialized by pollOnce().
         startPolling();
         sendPendingAction();
 
@@ -428,6 +429,8 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         final String savedName = prefs.getString(PREF_NAME, null);
         identityVerified = false;
 
+        // Most reconnect attempts use Android's direct GATT connection to the remembered MAC.
+        // Every third attempt falls back to an 8-second BALANCED scan; scanning is not continuous.
         if (reconnectAttempt % 3 != 0) {
             ble.connect(savedAddress, savedName, true);
             armReconnectWatchdog();
@@ -486,35 +489,59 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         pollTick = 0;
         fastPollIndex = 0;
         slowPollIndex = 0;
-        main.postDelayed(pollRunnable, 250L);
+        startupPollIndex = 0;
+        main.postDelayed(pollRunnable, 900L);
     }
 
     private void stopPolling() { main.removeCallbacks(pollRunnable); }
 
     private void pollOnce() {
         if (!identityVerified || !ble.isReady()) return;
+
         byte[] packet;
+        long nextDelay;
+
+        // Gentle startup sequence: one request at a time after the authentication settles.
+        if (startupPollIndex < 3) {
+            switch (startupPollIndex++) {
+                case 0: packet = G30Protocol.readBatteryPercent(); break;
+                case 1: packet = G30Protocol.readOdometer(); break;
+                default: packet = G30Protocol.readLockStatus(); break;
+            }
+            ble.send(packet);
+            main.postDelayed(pollRunnable, 700L);
+            return;
+        }
+
         pollTick++;
-        if (pollTick % 8 == 0) {
-            switch (slowPollIndex++ % 5) {
+        // Session distance is odometer-based, so refresh it predictably every five ticks.
+        if (pollTick % 20 == 0) {
+            switch (slowPollIndex++ % 3) {
                 case 0: packet = G30Protocol.readRemainingRange(); break;
-                case 1: packet = G30Protocol.readTripDistance(); break;
-                case 2: packet = G30Protocol.readOdometer(); break;
-                case 3: packet = G30Protocol.readControllerTemperature(); break;
+                case 1: packet = G30Protocol.readControllerTemperature(); break;
                 default: packet = G30Protocol.readBatteryTemperature(); break;
             }
+        } else if (pollTick % 5 == 0) {
+            packet = G30Protocol.readOdometer();
         } else {
-            switch (fastPollIndex++ % 5) {
-                case 0: packet = G30Protocol.readBatteryPercent(); break;
-                case 1: packet = G30Protocol.readSpeed(); break;
-                case 2: packet = G30Protocol.readBatteryCurrent(); break;
-                case 3: packet = G30Protocol.readBatteryVoltage(); break;
+            // Speed gets half of the fast slots so the notification remains responsive while
+            // still keeping the total radio traffic to one request per scheduler tick.
+            switch (fastPollIndex++ % 8) {
+                case 0:
+                case 2:
+                case 4:
+                case 6: packet = G30Protocol.readSpeed(); break;
+                case 1: packet = G30Protocol.readBatteryPercent(); break;
+                case 3: packet = G30Protocol.readBatteryCurrent(); break;
+                case 5: packet = G30Protocol.readBatteryVoltage(); break;
                 default: packet = G30Protocol.readLockStatus(); break;
             }
         }
+
         ble.send(packet);
         Double speed = telemetry.getSpeed();
-        main.postDelayed(pollRunnable, speed != null && speed > 1.0 ? 500L : 1000L);
+        nextDelay = speed != null && speed > 1.0 ? 500L : 1000L;
+        main.postDelayed(pollRunnable, nextDelay);
     }
 
     private void setState(ScooterConnectionState newState, String message) {
