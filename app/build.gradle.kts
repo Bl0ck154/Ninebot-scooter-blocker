@@ -20,8 +20,8 @@ android {
         applicationId = "com.bl0ck154.ninebotblocker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.10.1"
+        versionCode = 23
+        versionName = "0.10.2"
     }
 
     signingConfigs {
@@ -46,8 +46,18 @@ android {
             if (stableDebugKeystore.exists()) signingConfig = signingConfigs.getByName("stableDebug")
         }
         release {
-            isMinifyEnabled = false
-            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("releaseKey")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("releaseKey")
+            } else if (stableDebugKeystore.exists()) {
+                // Keep update compatibility with all APKs published so far.
+                signingConfig = signingConfigs.getByName("stableDebug")
+            }
         }
     }
 
