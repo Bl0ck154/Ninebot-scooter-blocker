@@ -51,6 +51,9 @@ public final class ScooterBleManager {
     public boolean isBluetoothEnabled() { return adapter != null && adapter.isEnabled(); }
     public boolean isReady() { return client != null && client.isReady(); }
     public boolean isScanning() { return scanning; }
+    public boolean isConnectionAttemptActive() {
+        return scanning || (client != null && !client.isReady());
+    }
 
     public void connect(String address, String preferredName, boolean reconnect) {
         stopScan();
@@ -82,13 +85,18 @@ public final class ScooterBleManager {
                 }
                 @Override public void onPacket(byte[] packet) { listener.onPacket(packet); }
                 @Override public void onActionResult(boolean success, Boolean locked, String message) { listener.onActionResult(success, locked, message); }
-                @Override public void onDisconnected(String reason) { listener.onDisconnected(reason); }
+                @Override public void onDisconnected(String reason) {
+                    client = null;
+                    listener.onDisconnected(reason);
+                }
             });
             client.connect(device, preferredName);
         } catch (IllegalArgumentException e) {
+            client = null;
             listener.onConnectionState(ScooterConnectionState.ERROR, "Saved scooter address is invalid");
             listener.onDisconnected("Saved scooter address is invalid.");
         } catch (SecurityException e) {
+            client = null;
             listener.onConnectionState(ScooterConnectionState.ERROR, "Bluetooth permission is required");
             listener.onDisconnected("Bluetooth permission is required.");
         }
@@ -118,7 +126,9 @@ public final class ScooterBleManager {
         scanCallback = new ScanCallback() {
             @Override public void onScanResult(int callbackType, ScanResult result) {
                 String name = advertisedName(result);
-                if (!looksLikeNinebot(name)) return;
+                // Manual discovery stays Ninebot-only. During reconnect we must also surface
+                // unnamed advertisements so the repository can match the remembered MAC.
+                if (!lowPower && !looksLikeNinebot(name)) return;
                 try { callback.onDeviceFound(result.getDevice().getAddress(), name, result.getRssi()); }
                 catch (SecurityException ignored) {}
             }
@@ -128,7 +138,7 @@ public final class ScooterBleManager {
             }
         };
         ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(lowPower ? ScanSettings.SCAN_MODE_LOW_POWER : ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+                .setScanMode(lowPower ? ScanSettings.SCAN_MODE_BALANCED : ScanSettings.SCAN_MODE_LOW_LATENCY).build();
         try {
             scanner.startScan(null, settings, scanCallback);
             main.postDelayed(() -> {
