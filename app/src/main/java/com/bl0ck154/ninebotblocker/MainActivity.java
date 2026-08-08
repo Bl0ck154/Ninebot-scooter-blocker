@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
@@ -18,6 +19,7 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CompoundButton;
@@ -31,7 +33,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 
-/** Compact daily-use G30 dashboard. Bluetooth transport is owned by ScooterRepository. */
+/** Compact daily-use scooter dashboard. Bluetooth transport is owned by ScooterRepository. */
 public final class MainActivity extends Activity implements ScooterRepository.Listener {
     private static final int REQ_BLE = 42;
     private static final int REQ_NOTIFICATIONS = 43;
@@ -49,11 +51,12 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
 
     private ScooterRepository repository;
-    private TextView deviceText, stateText, lockStateText, batteryPercentText, batteryText,
-            rideText, tripText, rangeText, totalText, tempText, statusText, batteryHelpButton;
+    private TextView titleText, deviceText, stateText, lockStateText, batteryPercentText, batteryText,
+            rideText, tripText, rangeText, totalText, tempText, batteryHelpButton, chargeSoundSettings;
     private Button lockButton;
-    private Switch persistentSwitch, autoConnectSwitch;
+    private Switch persistentSwitch, autoConnectSwitch, chargeAlertSwitch;
     private boolean suppressSwitches;
+    private boolean pendingChargeAlertPermission;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -62,6 +65,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         repository = ScooterRepository.get(this);
+        ScooterService.ensureNotificationChannels(this);
         buildUi();
         requestBlePermissionsIfNeeded();
     }
@@ -85,13 +89,28 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(20));
+        int side = dp(18);
+        int top = dp(18);
+        int bottom = dp(20);
+        root.setPadding(side, top, side, bottom);
+
+        // Android 15+ enforces edge-to-edge for targetSdk 35. Add the real status-bar/cutout
+        // inset so the title can never sit under the clock/camera.
+        if (Build.VERSION.SDK_INT >= 35) {
+            root.setOnApplyWindowInsetsListener((v, insets) -> {
+                Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                v.setPadding(side, top + bars.top, side, bottom + bars.bottom);
+                return insets;
+            });
+        }
+
         scroll.addView(root, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("Ninebot Max G30", 25, TEXT);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        root.addView(title, full(dp(2)));
+        titleText = text("Ninebot / Segway Scooter", 25, TEXT);
+        titleText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        root.addView(titleText, full(dp(2)));
 
         deviceText = text("No scooter selected", 12, MUTED);
         root.addView(deviceText, full(dp(8)));
@@ -99,15 +118,14 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         LinearLayout chips = new LinearLayout(this);
         chips.setOrientation(LinearLayout.HORIZONTAL);
         stateText = chip("Disconnected");
-        lockStateText = chip("Lock status —");
+        lockStateText = chip("🔏 Checking lock");
         chips.addView(stateText, wrapWithRight(dp(6)));
         chips.addView(lockStateText, wrapWithRight(0));
         root.addView(chips, full(dp(12)));
 
         LinearLayout hero = cardContainer();
         hero.setPadding(dp(16), dp(12), dp(16), dp(12));
-        TextView batteryLabel = label("BATTERY");
-        hero.addView(batteryLabel);
+        hero.addView(label("BATTERY"));
         batteryPercentText = text("--%", 46, TEXT);
         batteryPercentText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         hero.addView(batteryPercentText);
@@ -133,7 +151,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         root.addView(tempCard, full(dp(10)));
 
         lockButton = new Button(this);
-        lockButton.setText("🔒  LOCK");
+        lockButton.setText("🔐  LOCK");
         lockButton.setTextSize(17);
         lockButton.setTextColor(Color.WHITE);
         lockButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -152,11 +170,19 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         LinearLayout settingsCard = cardContainer();
         settingsCard.setPadding(dp(14), dp(2), dp(8), dp(2));
+
         persistentSwitch = addSetting(settingsCard, "Persistent notification");
         persistentSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
             if (suppressSwitches) return;
-            if (checked && Build.VERSION.SDK_INT >= 33
-                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            if (!checked && repository.isFullChargeAlertEnabled()) {
+                Toast.makeText(this,
+                        "Full-charge alert needs the background connection. Turn that alert off first.",
+                        Toast.LENGTH_LONG).show();
+                setSwitchWithoutCallback(persistentSwitch, true);
+                return;
+            }
+            if (checked && !hasNotificationPermission()) {
+                pendingChargeAlertPermission = false;
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
                 setSwitchWithoutCallback(persistentSwitch, false);
                 return;
@@ -168,7 +194,27 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         autoConnectSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
             if (!suppressSwitches) repository.setAutoConnectEnabled(checked);
         });
-        root.addView(settingsCard, full(dp(8)));
+
+        chargeAlertSwitch = addSetting(settingsCard, "Full-charge sound alert");
+        chargeAlertSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (suppressSwitches) return;
+            if (checked && !hasNotificationPermission()) {
+                pendingChargeAlertPermission = true;
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+                setSwitchWithoutCallback(chargeAlertSwitch, false);
+                return;
+            }
+            setFullChargeAlert(checked);
+        });
+        root.addView(settingsCard, full(dp(6)));
+
+        chargeSoundSettings = text("Full-charge sound settings  ›", 12, ACCENT);
+        chargeSoundSettings.setGravity(Gravity.CENTER);
+        chargeSoundSettings.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        chargeSoundSettings.setPadding(dp(10), dp(7), dp(10), dp(7));
+        chargeSoundSettings.setOnClickListener(v -> openChargeAlertSettings());
+        chargeSoundSettings.setVisibility(View.GONE);
+        root.addView(chargeSoundSettings, full(dp(4)));
 
         batteryHelpButton = text("Battery optimization help  ›", 13, ACCENT);
         batteryHelpButton.setGravity(Gravity.CENTER);
@@ -187,13 +233,11 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         shortcutButton.setOnClickListener(v -> requestHomeShortcut());
         actionRow.addView(selectButton, weightedWithMargins(true));
         actionRow.addView(shortcutButton, weightedWithMargins(false));
-        root.addView(actionRow, full(dp(8)));
+        root.addView(actionRow, full(0));
 
-        statusText = text("Ready", 12, MUTED);
-        statusText.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(statusText, full(0));
-
+        // Deliberately no duplicate bottom status line; connection and lock state live in chips above.
         setContentView(scroll);
+        if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
     }
 
     private TextView[] addMetricPair(LinearLayout root, String leftLabel, String rightLabel) {
@@ -244,7 +288,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(7), 0, dp(7));
+        row.setPadding(0, dp(6), 0, dp(6));
         TextView text = text(title, 15, TEXT);
         row.addView(text, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Switch toggle = new Switch(this);
@@ -274,15 +318,16 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     private void render(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
+        titleText.setText(snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName);
+
         String name = snapshot.deviceName == null || snapshot.deviceName.trim().isEmpty()
-                ? "Ninebot Max G30" : snapshot.deviceName;
+                ? "Ninebot / Segway scooter" : snapshot.deviceName;
         deviceText.setText(snapshot.address == null ? "No scooter selected" : name + "  ·  " + snapshot.address);
 
         stateText.setText(prettyState(snapshot.connectionState));
         styleConnectionChip(snapshot.connectionState);
         styleLockChip(t.getLocked());
 
-        statusText.setText(snapshot.status == null ? "" : snapshot.status);
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
         batteryText.setText(formatBattery(t));
         rideText.setText(t.getSpeed() == null ? "—" : f("%.1f km/h", t.getSpeed()));
@@ -293,7 +338,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         Boolean locked = t.getLocked();
         boolean isLocked = Boolean.TRUE.equals(locked);
-        lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔒  LOCK");
+        lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔐  LOCK");
         lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
         lockButton.setEnabled(snapshot.address != null);
         lockButton.setAlpha(snapshot.address == null ? 0.45f : 1f);
@@ -301,8 +346,11 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         suppressSwitches = true;
         persistentSwitch.setChecked(snapshot.persistent);
         autoConnectSwitch.setChecked(snapshot.autoConnect);
+        chargeAlertSwitch.setChecked(snapshot.fullChargeAlert);
         suppressSwitches = false;
-        updateBatteryHelpVisibility(snapshot.persistent);
+
+        chargeSoundSettings.setVisibility(snapshot.fullChargeAlert ? View.VISIBLE : View.GONE);
+        updateBatteryHelpVisibility(snapshot.persistent || snapshot.fullChargeAlert);
     }
 
     private void styleConnectionChip(ScooterConnectionState state) {
@@ -327,7 +375,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     private void styleLockChip(Boolean locked) {
         if (Boolean.TRUE.equals(locked)) {
-            lockStateText.setText("🔒 Locked");
+            lockStateText.setText("🔐 Locked");
             lockStateText.setTextColor(Color.rgb(52, 64, 84));
             lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
         } else if (Boolean.FALSE.equals(locked)) {
@@ -335,7 +383,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             lockStateText.setTextColor(ACCENT);
             lockStateText.setBackground(rounded(ACCENT_SOFT, 99));
         } else {
-            lockStateText.setText("Lock status —");
+            lockStateText.setText("🔏 Checking lock");
             lockStateText.setTextColor(MUTED);
             lockStateText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
         }
@@ -359,13 +407,16 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     }
 
     private void startScooterPicker() {
-        if (!hasBlePermissions()) { requestBlePermissionsIfNeeded(); return; }
+        if (!hasBlePermissions()) {
+            requestBlePermissionsIfNeeded();
+            return;
+        }
         LinkedHashMap<String, String> namesByAddress = new LinkedHashMap<>();
         ArrayList<String> labels = new ArrayList<>();
         ArrayList<String> addresses = new ArrayList<>();
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, labels);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Select your Ninebot")
+                .setTitle("Select your Ninebot / Segway")
                 .setAdapter(adapter, (d, which) -> {
                     if (which >= 0 && which < addresses.size()) {
                         String address = addresses.get(which);
@@ -382,7 +433,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                     if (namesByAddress.containsKey(address)) return;
                     namesByAddress.put(address, name);
                     addresses.add(address);
-                    labels.add((name == null || name.trim().isEmpty() ? "Ninebot" : name)
+                    labels.add((name == null || name.trim().isEmpty() ? "Ninebot / Segway" : name)
                             + "\n" + address + "   " + rssi + " dBm");
                     adapter.notifyDataSetChanged();
                 });
@@ -390,7 +441,8 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             @Override public void onFinished() {
                 runOnUiThread(() -> {
                     if (labels.isEmpty()) Toast.makeText(MainActivity.this,
-                            "No Ninebot scooter found. Keep the G30 switched on.", Toast.LENGTH_LONG).show();
+                            "No compatible Ninebot / Segway found. Keep the scooter switched on.",
+                            Toast.LENGTH_LONG).show();
                 });
             }
             @Override public void onError(String message) {
@@ -406,10 +458,11 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             Toast.makeText(this, "Pinned shortcuts are not supported by this launcher.", Toast.LENGTH_LONG).show();
             return;
         }
+        String model = repository.snapshot().modelName;
         Intent intent = new Intent(this, ToggleShortcutActivity.class).setAction(ToggleShortcutActivity.ACTION_TOGGLE);
         ShortcutInfo info = new ShortcutInfo.Builder(this, "ninebot-lock-toggle")
-                .setShortLabel("Ninebot lock")
-                .setLongLabel("Toggle Ninebot Max lock")
+                .setShortLabel("Scooter lock")
+                .setLongLabel("Toggle " + (model == null ? "scooter" : model) + " lock")
                 .setIcon(Icon.createWithResource(this, R.drawable.ic_shortcut_lock))
                 .setIntent(intent)
                 .build();
@@ -427,13 +480,39 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
             else startService(intent);
         } else {
+            // Turning off the notification must not mean "disconnect" while the dashboard is open.
             repository.setPersistentEnabled(false);
-            startService(new Intent(this, ScooterService.class).setAction(ScooterService.ACTION_STOP));
+            startService(new Intent(this, ScooterService.class)
+                    .setAction(ScooterService.ACTION_STOP_NOTIFICATION));
         }
     }
 
-    private void updateBatteryHelpVisibility(boolean persistent) {
-        if (!persistent || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+    private void setFullChargeAlert(boolean enabled) {
+        ScooterService.ensureNotificationChannels(this);
+        repository.setFullChargeAlertEnabled(enabled);
+        if (enabled) {
+            if (!repository.isPersistentEnabled()) setPersistentConnection(true);
+            Toast.makeText(this,
+                    "Full-charge alert armed. It will sound when battery rises to 100%.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openChargeAlertSettings() {
+        ScooterService.ensureNotificationChannels(this);
+        try {
+            Intent intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, ScooterService.CHARGE_CHANNEL_ID);
+            startActivity(intent);
+        } catch (Exception e) {
+            startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+        }
+    }
+
+    private void updateBatteryHelpVisibility(boolean backgroundNeeded) {
+        if (!backgroundNeeded || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             batteryHelpButton.setVisibility(View.GONE);
             return;
         }
@@ -445,12 +524,17 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private void showBatteryHelp() {
         new AlertDialog.Builder(this)
                 .setTitle("Background connection")
-                .setMessage("If Android keeps stopping the scooter connection, open Battery optimization settings and allow this app to run reliably in the background. The app does not hold a permanent wake lock.")
+                .setMessage("If Android keeps stopping the scooter connection, allow this app to run reliably in the background. The app does not hold a permanent wake lock.")
                 .setPositiveButton("Open settings", (d, w) -> {
                     try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
                     catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
                 })
                 .setNegativeButton("Later", null).show();
+    }
+
+    private boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < 33
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean hasBlePermissions() {
@@ -474,12 +558,18 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_BLE) {
             if (hasBlePermissions()) repository.setUiActive(true);
-            else Toast.makeText(this, "Bluetooth access is required to connect to the G30.", Toast.LENGTH_LONG).show();
+            else Toast.makeText(this, "Bluetooth access is required to connect to the scooter.", Toast.LENGTH_LONG).show();
         } else if (requestCode == REQ_NOTIFICATIONS) {
-            boolean granted = Build.VERSION.SDK_INT < 33
-                    || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-            if (granted) setPersistentConnection(true);
-            else Toast.makeText(this, "Notification permission is needed for the persistent connection.", Toast.LENGTH_LONG).show();
+            boolean granted = hasNotificationPermission();
+            if (granted) {
+                if (pendingChargeAlertPermission) setFullChargeAlert(true);
+                else setPersistentConnection(true);
+            } else {
+                Toast.makeText(this,
+                        "Notification permission is required for background and charge alerts.",
+                        Toast.LENGTH_LONG).show();
+            }
+            pendingChargeAlertPermission = false;
         }
     }
 
