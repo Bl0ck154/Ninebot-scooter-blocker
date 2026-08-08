@@ -5,11 +5,14 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.json.JSONException;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** Single source of truth for identity, connection, commands, reconnect and telemetry. */
+/** Single source of truth for identity, connection, commands, reconnect, telemetry and ride stats. */
 public final class ScooterRepository implements ScooterBleManager.Listener {
     public static final String PREFS = "ninebot_quick_lock";
     public static final String PREF_ADDRESS = "address";
@@ -40,10 +43,11 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         public final boolean autoConnect;
         public final boolean persistent;
         public final boolean fullChargeAlert;
+        public final RideStatsTracker.Snapshot rideStats;
 
         Snapshot(ScooterConnectionState state, ScooterTelemetry telemetry, String name,
                  String modelName, String address, String status, boolean autoConnect,
-                 boolean persistent, boolean fullChargeAlert) {
+                 boolean persistent, boolean fullChargeAlert, RideStatsTracker.Snapshot rideStats) {
             this.connectionState = state;
             this.telemetry = telemetry;
             this.deviceName = name;
@@ -53,6 +57,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             this.autoConnect = autoConnect;
             this.persistent = persistent;
             this.fullChargeAlert = fullChargeAlert;
+            this.rideStats = rideStats;
         }
     }
 
@@ -71,6 +76,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ScooterBleManager ble;
     private final ScooterTelemetry telemetry = new ScooterTelemetry();
+    private final RideStatsTracker rideStats;
     private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private final long[] reconnectDelays = {1000, 2000, 5000, 10000, 30000};
 
@@ -92,6 +98,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         appContext = context.getApplicationContext();
         prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         ble = new ScooterBleManager(appContext, this);
+        rideStats = new RideStatsTracker(appContext);
         if (prefs.getBoolean(PREF_LOCK_KNOWN, false)) {
             telemetry.setLocked(prefs.getBoolean(PREF_LOCK_STATE, false));
         }
@@ -107,10 +114,11 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     public Snapshot snapshot() {
         String name = deviceName();
+        String key = scooterKey();
         return new Snapshot(state, telemetry.copy(), name,
                 ScooterIdentity.displayModel(name, prefs.getString(PREF_SERIAL, null)),
                 address(), status, isAutoConnectEnabled(), isPersistentEnabled(),
-                isFullChargeAlertEnabled());
+                isFullChargeAlertEnabled(), rideStats.snapshot(key));
     }
 
     public boolean hasRememberedScooter() { return address() != null; }
@@ -124,6 +132,51 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         return value == null || value.trim().isEmpty() ? "Ninebot / Segway scooter" : value;
     }
 
+    public String scooterKey() {
+        String serial = prefs.getString(PREF_SERIAL, null);
+        if (serial != null && !serial.trim().isEmpty()) return "serial:" + serial.trim();
+        String address = address();
+        return address == null ? null : "ble:" + address;
+    }
+
+    public RideStatsStore.PeriodSummary periodStats(int period) {
+        String key = scooterKey();
+        return key == null ? new RideStatsStore.PeriodSummary(0, 0, 0, 0, 0, 0)
+                : rideStats.period(key, period);
+    }
+
+    public List<RideStatsStore.RideRecord> recentRides(int limit) {
+        String key = scooterKey();
+        return key == null ? java.util.Collections.emptyList() : rideStats.recentRides(key, limit);
+    }
+
+    public boolean endCurrentRide() {
+        boolean changed = rideStats.endRideNow(scooterKey());
+        if (changed) notifyListeners();
+        return changed;
+    }
+
+    public boolean continuePreviousRide() {
+        boolean changed = rideStats.continuePreviousRide(scooterKey());
+        if (changed) notifyListeners();
+        return changed;
+    }
+
+    public int getRidePauseMinutes() { return rideStats.getPauseMinutes(); }
+    public long getRidePauseTimeoutMs() { return rideStats.pauseTimeoutMs(); }
+
+    public void setRidePauseMinutes(int minutes) {
+        rideStats.setPauseMinutes(minutes);
+        notifyListeners();
+    }
+
+    public String exportStatistics() throws JSONException { return rideStats.exportJson(); }
+
+    public void importStatisticsReplace(String json) throws JSONException {
+        rideStats.importJsonReplace(json);
+        notifyListeners();
+    }
+
     public void setUiActive(boolean active) {
         uiActive = active;
         if (active) {
@@ -132,7 +185,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             stopPolling();
             cancelReconnect();
             ble.disconnectSilently();
+            identityVerified = false;
             telemetry.setConnected(false);
+            rideStats.onDisconnected();
             setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
         }
     }
@@ -162,7 +217,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         cancelReconnect();
         stopPolling();
         ble.disconnectSilently();
+        identityVerified = false;
         telemetry.setConnected(false);
+        rideStats.onDisconnected();
         setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
     }
 
@@ -172,8 +229,6 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
                 || state == ScooterConnectionState.CONNECTED) return;
 
         if (state == ScooterConnectionState.RECONNECTING) {
-            // A delayed backoff is not an active BLE operation. When the UI comes back,
-            // kick the saved scooter immediately instead of showing RECONNECTING forever.
             if (!ble.isConnectionAttemptActive()) {
                 main.removeCallbacks(reconnectRunnable);
                 runReconnectAttempt();
@@ -192,6 +247,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         identityVerified = false;
         telemetry.setConnected(false);
+        rideStats.onDisconnected();
         ble.disconnectSilently();
         setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
     }
@@ -234,6 +290,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         ble.disconnectSilently();
         identityVerified = false;
+        rideStats.onDisconnected();
         ble.startScan(false, 10000, new ScooterBleManager.ScanListener() {
             @Override public void onDeviceFound(String address, String name, int rssi) {
                 listener.onDevice(address, name, rssi);
@@ -255,6 +312,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         ble.stopScan();
         cancelReconnect();
         stopPolling();
+        rideStats.onDisconnected();
         identityVerified = false;
         pendingDesiredLock = null;
         telemetry.setLocked(null);
@@ -281,6 +339,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
                 && incomingSerial != null && !rememberedSerial.equals(incomingSerial)) {
             identityVerified = false;
             telemetry.setConnected(false);
+            rideStats.onDisconnected();
             ble.disconnectSilently();
             setState(ScooterConnectionState.ERROR,
                     "A different Ninebot answered; reconnecting to your saved scooter");
@@ -294,8 +353,12 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         reconnectAttempt = 0;
         cancelReconnect();
         telemetry.setConnected(true);
+        rideStats.onConnected(scooterKey());
         setState(ScooterConnectionState.READY, "Connected");
 
+        // Prime the statistics baseline immediately instead of waiting for the slow polling lane.
+        ble.send(G30Protocol.readOdometer());
+        ble.send(G30Protocol.readBatteryPercent());
         ble.send(G30Protocol.readLockStatus());
         startPolling();
         sendPendingAction();
@@ -306,7 +369,10 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     @Override public void onPacket(byte[] packet) {
-        if (identityVerified && G30Protocol.applyTelemetryPacket(packet, telemetry)) notifyListeners();
+        if (identityVerified && G30Protocol.applyTelemetryPacket(packet, telemetry)) {
+            rideStats.onTelemetry(scooterKey(), telemetry);
+            notifyListeners();
+        }
     }
 
     @Override public void onActionResult(boolean success, Boolean locked, String message) {
@@ -325,6 +391,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         cancelReconnectWatchdog();
         identityVerified = false;
         telemetry.setConnected(false);
+        rideStats.onDisconnected();
         stopPolling();
         status = reason == null ? "Disconnected" : reason;
         if (shouldStayConnected() && isAutoConnectEnabled() && hasRememberedScooter()) {
@@ -357,9 +424,6 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         final String savedName = prefs.getString(PREF_NAME, null);
         identityVerified = false;
 
-        // G30 exposes a stable BLE address, so direct reconnect is both faster and cheaper
-        // than scanning. Every third attempt uses discovery as a fallback for devices whose
-        // advertisement/address behavior differs.
         if (reconnectAttempt % 3 != 0) {
             ble.connect(savedAddress, savedName, true);
             armReconnectWatchdog();
