@@ -39,7 +39,8 @@ public final class ScooterBleManager {
     private ScanCallback scanCallback;
     private NinebotBleClient client;
     private boolean scanning;
-    private boolean reconnecting;
+    private volatile long connectionGeneration;
+    private volatile long scanGeneration;
 
     public ScooterBleManager(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -66,36 +67,68 @@ public final class ScooterBleManager {
             listener.onConnectionState(ScooterConnectionState.ERROR, "No scooter selected");
             return;
         }
-        disconnectSilently();
-        reconnecting = reconnect;
+
+        // Invalidate callbacks from every previous GATT before closing it. Android can deliver
+        // a late DISCONNECTED/error callback after a replacement connection has already started;
+        // without a generation guard that stale callback could null out the new live client.
+        final long generation = ++connectionGeneration;
+        NinebotBleClient old = client;
+        client = null;
+        if (old != null) old.closeSilently();
+
+        final boolean reconnectAttempt = reconnect;
         listener.onConnectionState(reconnect ? ScooterConnectionState.RECONNECTING : ScooterConnectionState.CONNECTING,
                 reconnect ? "Reconnecting…" : "Connecting…");
         try {
             BluetoothDevice device = adapter.getRemoteDevice(address);
-            client = new NinebotBleClient(context, new NinebotBleClient.Listener() {
+            NinebotBleClient newClient = new NinebotBleClient(context, new NinebotBleClient.Listener() {
+                private boolean current() { return generation == connectionGeneration; }
+
                 @Override public void onStatus(String status) {
+                    if (!current()) return;
                     if (status != null && status.contains("POWER")) {
-                        listener.onConnectionState(reconnecting ? ScooterConnectionState.RECONNECTING : ScooterConnectionState.CONNECTING, status);
+                        listener.onConnectionState(reconnectAttempt
+                                ? ScooterConnectionState.RECONNECTING
+                                : ScooterConnectionState.CONNECTING, status);
                     }
                 }
-                @Override public void onTransportConnected() { listener.onConnectionState(ScooterConnectionState.CONNECTED, "Bluetooth connected"); }
-                @Override public void onReady() {
-                    listener.onConnectionState(ScooterConnectionState.READY, "Connected");
-                    listener.onReady(client == null ? null : client.getSerial());
+
+                @Override public void onTransportConnected() {
+                    if (!current()) return;
+                    listener.onConnectionState(ScooterConnectionState.CONNECTED, "Bluetooth connected");
                 }
-                @Override public void onPacket(byte[] packet) { listener.onPacket(packet); }
-                @Override public void onActionResult(boolean success, Boolean locked, String message) { listener.onActionResult(success, locked, message); }
+
+                @Override public void onReady() {
+                    if (!current()) return;
+                    NinebotBleClient active = client;
+                    if (active == null) return;
+                    listener.onConnectionState(ScooterConnectionState.READY, "Connected");
+                    listener.onReady(active.getSerial());
+                }
+
+                @Override public void onPacket(byte[] packet) {
+                    if (current()) listener.onPacket(packet);
+                }
+
+                @Override public void onActionResult(boolean success, Boolean locked, String message) {
+                    if (current()) listener.onActionResult(success, locked, message);
+                }
+
                 @Override public void onDisconnected(String reason) {
+                    if (!current()) return;
                     client = null;
                     listener.onDisconnected(reason);
                 }
             });
-            client.connect(device, preferredName);
+            client = newClient;
+            newClient.connect(device, preferredName);
         } catch (IllegalArgumentException e) {
+            if (generation != connectionGeneration) return;
             client = null;
             listener.onConnectionState(ScooterConnectionState.ERROR, "Saved scooter address is invalid");
             listener.onDisconnected("Saved scooter address is invalid.");
         } catch (SecurityException e) {
+            if (generation != connectionGeneration) return;
             client = null;
             listener.onConnectionState(ScooterConnectionState.ERROR, "Bluetooth permission is required");
             listener.onDisconnected("Bluetooth permission is required.");
@@ -114,47 +147,61 @@ public final class ScooterBleManager {
         return true;
     }
 
-    public void startScan(boolean lowPower, long timeoutMs, ScanListener callback) {
+    public void startScan(boolean reconnectScan, long timeoutMs, ScanListener callback) {
         stopScan();
-        reconnecting = lowPower;
         if (adapter == null || !adapter.isEnabled()) { callback.onScanError("Turn Bluetooth on"); return; }
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) { callback.onScanError("Bluetooth scanner is unavailable"); return; }
+
+        final long generation = ++scanGeneration;
         scanning = true;
-        listener.onConnectionState(lowPower ? ScooterConnectionState.RECONNECTING : ScooterConnectionState.SCANNING,
-                lowPower ? "Looking for saved scooter…" : "Searching…");
+        listener.onConnectionState(reconnectScan ? ScooterConnectionState.RECONNECTING : ScooterConnectionState.SCANNING,
+                reconnectScan ? "Looking for saved scooter…" : "Searching…");
         scanCallback = new ScanCallback() {
+            private boolean current() { return generation == scanGeneration && scanning; }
+
             @Override public void onScanResult(int callbackType, ScanResult result) {
+                if (!current()) return;
                 String name = advertisedName(result);
                 // Manual discovery stays Ninebot-only. During reconnect we must also surface
                 // unnamed advertisements so the repository can match the remembered MAC.
-                if (!lowPower && !looksLikeNinebot(name)) return;
+                if (!reconnectScan && !looksLikeNinebot(name)) return;
                 try { callback.onDeviceFound(result.getDevice().getAddress(), name, result.getRssi()); }
                 catch (SecurityException ignored) {}
             }
+
             @Override public void onScanFailed(int errorCode) {
-                stopScanInternal();
+                if (!current()) return;
+                stopScanHardware();
+                scanGeneration++;
                 callback.onScanError("BLE scan failed: " + errorCode);
             }
         };
         ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(lowPower ? ScanSettings.SCAN_MODE_BALANCED : ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+                .setScanMode(reconnectScan ? ScanSettings.SCAN_MODE_BALANCED : ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build();
         try {
             scanner.startScan(null, settings, scanCallback);
             main.postDelayed(() -> {
-                if (!scanning) return;
-                stopScanInternal();
+                if (generation != scanGeneration || !scanning) return;
+                stopScanHardware();
+                scanGeneration++;
                 callback.onScanFinished();
             }, Math.max(1000, timeoutMs));
         } catch (SecurityException e) {
-            stopScanInternal();
+            if (generation != scanGeneration) return;
+            stopScanHardware();
+            scanGeneration++;
             callback.onScanError("Bluetooth permission is required");
         }
     }
 
-    public void stopScan() { stopScanInternal(); }
+    public void stopScan() {
+        scanGeneration++;
+        stopScanHardware();
+    }
 
-    private void stopScanInternal() {
+    private void stopScanHardware() {
         if (scanning && scanner != null && scanCallback != null) {
             try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
         }
@@ -165,7 +212,7 @@ public final class ScooterBleManager {
 
     public void disconnect() {
         stopScan();
-        reconnecting = false;
+        connectionGeneration++;
         NinebotBleClient old = client;
         client = null;
         if (old != null) old.cancel();
@@ -174,6 +221,7 @@ public final class ScooterBleManager {
 
     public void disconnectSilently() {
         stopScan();
+        connectionGeneration++;
         NinebotBleClient old = client;
         client = null;
         if (old != null) old.closeSilently();
