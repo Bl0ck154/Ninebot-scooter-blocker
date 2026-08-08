@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Notification/reconnect UX update: after an established scooter connection is lost, the ongoing notification remains visible for up to 20 minutes instead of disappearing immediately. It shows the last known range plus a red Reconnecting/Disconnected state and provides a RECONNECT button; a successful reconnect restores the normal lock/unlock control and cancels the 20-minute expiry. Connected notification telemetry now uses a stable order (speed, range, then connection state) instead of swapping between speed/range and range/trip layouts while riding or stopping. The green Connected indicator is moved to the end of the line so live telemetry gets priority.'
+          NOTES='Ride statistics feature: the app now persists a per-scooter work-ride distance from odometer deltas across short scooter sleeps, shows current ride distance in the dashboard and live notification, and provides a dedicated Statistics screen with current ride, day/week/month summaries, recent rides, battery used/charged, max speed and connected time. Ride pause continuity is configurable to 20/30/60 minutes and shares the same offline-notification timeout. End ride and Continue previous controls are included, plus JSON import/export backup. Statistics writes are throttled for multi-hour courier use. Existing G30 BLE authentication, lock/unlock and telemetry protocol are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
