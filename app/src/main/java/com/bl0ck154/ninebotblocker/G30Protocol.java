@@ -15,7 +15,6 @@ public final class G30Protocol {
     public static final int REG_BATTERY = 0xB4;
     public static final int REG_SPEED = 0xB5;
     public static final int REG_ODOMETER = 0xB7;
-    public static final int REG_TRIP = 0xB9;
 
     public static final int REG_BMS_CURRENT = 0x33;
     public static final int REG_BMS_VOLTAGE = 0x34;
@@ -26,9 +25,6 @@ public final class G30Protocol {
 
     private G30Protocol() {}
 
-    public static byte[] initPacket() { return ShuNinebotProtocol.initPacket(); }
-    public static byte[] pingPacket() { return ShuNinebotProtocol.pingPacket(); }
-    public static byte[] pairPacket(byte[] serial) { return ShuNinebotProtocol.pairPacket(serial); }
     public static byte[] lockPacket() { return ShuNinebotProtocol.lockPacket(); }
     public static byte[] unlockPacket() { return ShuNinebotProtocol.unlockPacket(); }
 
@@ -36,7 +32,6 @@ public final class G30Protocol {
     public static byte[] readBatteryPercent() { return readEsc(REG_BATTERY, 2); }
     public static byte[] readSpeed() { return readEsc(REG_SPEED, 2); }
     public static byte[] readOdometer() { return readEsc(REG_ODOMETER, 4); }
-    public static byte[] readTripDistance() { return readEsc(REG_TRIP, 2); }
     public static byte[] readRemainingRange() { return readEsc(REG_RANGE, 2); }
     public static byte[] readControllerTemperature() { return readEsc(REG_CONTROLLER_TEMP, 2); }
     public static byte[] readBatteryCurrent() { return readBms(REG_BMS_CURRENT, 2); }
@@ -81,7 +76,7 @@ public final class G30Protocol {
             case REG_BATTERY: {
                 if (payload.length < 2) return false;
                 int value = u16(payload, 0);
-                if (value < 0 || value > 100) return false;
+                if (value > 100) return false;
                 telemetry.setBatteryPercent(value);
                 return true;
             }
@@ -97,15 +92,10 @@ public final class G30Protocol {
                 telemetry.setTotalDistance(u32(payload, 0) / 1000.0);
                 return true;
             }
-            case REG_TRIP: {
-                if (payload.length < 2) return false;
-                telemetry.setTripDistance(u16(payload, 0) / 100.0);
-                return true;
-            }
             case REG_RANGE: {
                 if (payload.length < 2) return false;
                 double value = u16(payload, 0) / 100.0;
-                if (value < 0.0 || value > 200.0) return false;
+                if (value > 200.0) return false;
                 telemetry.setRemainingRange(value);
                 return true;
             }
