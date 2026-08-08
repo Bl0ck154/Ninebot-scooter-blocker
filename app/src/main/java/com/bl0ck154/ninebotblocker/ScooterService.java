@@ -62,25 +62,27 @@ public final class ScooterService extends Service implements ScooterRepository.L
         lastNotificationAt = System.currentTimeMillis();
     };
 
-    private final Runnable disconnectExpiryRunnable = () -> {
-        if (!foregroundStarted || disconnectedSince == 0L || repository == null) return;
-        ScooterRepository.Snapshot current = repository.snapshot();
-        boolean ready = current.connectionState == ScooterConnectionState.READY
-                && current.telemetry.isConnected();
-        if (ready) {
-            disconnectedSince = 0L;
-            return;
+    private final Runnable disconnectExpiryRunnable = new Runnable() {
+        @Override public void run() {
+            if (!foregroundStarted || disconnectedSince == 0L || repository == null) return;
+            ScooterRepository.Snapshot current = repository.snapshot();
+            boolean ready = current.connectionState == ScooterConnectionState.READY
+                    && current.telemetry.isConnected();
+            if (ready) {
+                disconnectedSince = 0L;
+                return;
+            }
+            long elapsed = System.currentTimeMillis() - disconnectedSince;
+            if (elapsed < DISCONNECTED_NOTIFICATION_GRACE_MS) {
+                main.postDelayed(this, DISCONNECTED_NOTIFICATION_GRACE_MS - elapsed);
+                return;
+            }
+            pendingSnapshot = null;
+            main.removeCallbacks(notificationRunnable);
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            foregroundStarted = false;
+            stopSelf();
         }
-        long elapsed = System.currentTimeMillis() - disconnectedSince;
-        if (elapsed < DISCONNECTED_NOTIFICATION_GRACE_MS) {
-            main.postDelayed(disconnectExpiryRunnable, DISCONNECTED_NOTIFICATION_GRACE_MS - elapsed);
-            return;
-        }
-        pendingSnapshot = null;
-        main.removeCallbacks(notificationRunnable);
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        foregroundStarted = false;
-        stopSelf();
     };
 
     public static boolean isRunning() { return running; }
