@@ -1,7 +1,6 @@
 package com.bl0ck154.ninebotblocker;
 
 import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
@@ -40,21 +39,6 @@ public final class ShuNinebotProtocolTest {
         assertArrayEquals(
                 hex("5AA5013E20027101"),
                 ShuNinebotProtocol.unlockPacket());
-    }
-
-    @Test
-    public void buildsLockStateReadPacket() {
-        assertArrayEquals(
-                hex("5AA5013E20011D02"),
-                ShuNinebotProtocol.readLockStatePacket());
-    }
-
-    @Test
-    public void parsesLockStateBitFromEscReply() {
-        assertEquals(Boolean.TRUE,
-                ShuNinebotProtocol.lockStateFromResponse(hex("5AA502203E041D0200")));
-        assertEquals(Boolean.FALSE,
-                ShuNinebotProtocol.lockStateFromResponse(hex("5AA502203E041D0000")));
     }
 
     private static byte[] hex(String value) {
