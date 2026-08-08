@@ -67,8 +67,15 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         if (ACTION_STOP_NOTIFICATION.equals(action)) {
             repository.setPersistentEnabled(false);
+            if (repository.isFullChargeAlertEnabled()) {
+                // Charge monitoring still needs a foreground service on modern Android.
+                // Keep the service/connection alive instead of briefly dropping out of FGS state.
+                startForeground(NOTIFICATION_ID, buildNotification(repository.snapshot()));
+                repository.connectIfNeeded();
+                return START_STICKY;
+            }
             stopForeground(STOP_FOREGROUND_REMOVE);
-            if (!repository.isFullChargeAlertEnabled()) stopSelf();
+            stopSelf();
             return START_NOT_STICKY;
         }
 
