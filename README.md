@@ -9,7 +9,6 @@
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Release](https://img.shields.io/github/v/release/Bl0ck154/Ninebot-scooter-blocker?label=release)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
 [![Build](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml/badge.svg)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml)
-[![Platform](https://img.shields.io/badge/platform-Android-blue)](https://github.com/Bl0ck154/Ninebot-scooter-blocker)
 
 [**⬇️ Download latest APK**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
 
@@ -19,24 +18,22 @@
 
 ## What is it?
 
-**Ninebot Scooter Blocker** is a small daily-use Android companion built around the BLE/authentication implementation that is hardware-tested on the **Ninebot Max G30**.
+**Ninebot Scooter Blocker** is a small daily-use Android companion built around the BLE/authentication implementation hardware-tested on the **Ninebot Max G30**.
 
-It keeps the everyday features useful during long courier shifts without becoming a firmware flashing/tuning toolbox: reliable background BLE, telemetry, lock/unlock, a compact notification, charge alerts and local ride statistics.
-
-### Built for everyday riding
+It focuses on the things useful during everyday riding and courier work instead of becoming a firmware-tuning toolbox: reliable background BLE, telemetry, quick software lock/unlock, a compact notification, charge alerts and persistent ride statistics.
 
 | | Feature |
 |---|---|
 | 🔗 | Automatic BLE connection to the remembered scooter |
-| 🔄 | Reconnect with battery-friendly backoff |
+| 🔄 | Reconnect with battery-friendly backoff and stale-GATT protection |
 | 🔐 | One-tap software lock / unlock |
-| 🔋 | Live battery %, voltage, current and power |
-| 🛞 | Speed, odometer and estimated remaining range |
+| 🔋 | Battery %, voltage, current and power |
+| 🛞 | Live speed, odometer and estimated remaining range |
 | 📊 | Persistent ride + day/week/month statistics |
 | ⏸️ | Short scooter sleeps stay inside the same ride session |
 | 💾 | JSON statistics import / export |
 | 🌡️ | Controller and battery temperatures when available |
-| 🔔 | Persistent live notification with ride distance and quick lock control |
+| 🔔 | Persistent notification with current ride distance and quick lock control |
 | 🔊 | Optional sound alert when charging reaches 100% |
 | 🏠 | Home-screen lock shortcut |
 | ⚡ | No permanent wake lock and no aggressive continuous BLE scanning |
@@ -58,9 +55,9 @@ It keeps the everyday features useful during long courier shifts without becomin
 
 ## Dashboard
 
-The main dashboard stays intentionally compact:
+The compact dashboard shows:
 
-- current scooter/model and BLE state;
+- detected scooter/model and BLE state;
 - battery percentage, voltage, current and power;
 - live speed;
 - **Session** distance tracked independently from the scooter's volatile trip counter;
@@ -76,82 +73,56 @@ Swipe left from the dashboard or tap **Statistics ›**. Swipe right on the stat
 
 ## Ride statistics
 
-Statistics are stored locally on the phone and separated by the remembered scooter serial number (BLE address is the fallback identity).
+Statistics are stored locally on the phone and separated by scooter serial number, with BLE address as the fallback identity.
 
-### Current ride
+A current ride tracks distance from **odometer deltas**, elapsed time, connected time, battery percentage used/charged and maximum observed speed. Turning the scooter off for a short shop/restaurant stop does not immediately finish the ride.
 
-A ride session tracks:
-
-- distance from **odometer deltas** rather than the G30 trip counter;
-- elapsed session duration;
-- connected time;
-- battery percentage discharged;
-- battery percentage charged;
-- maximum observed speed.
-
-Turning the scooter off for a shop/restaurant stop does not immediately finish the ride. The same ride continues when the scooter reconnects inside the configured pause window.
-
-The pause timeout is selectable in the Statistics screen:
+The pause timeout is selectable:
 
 ```text
 20 min · 30 min · 60 min
 ```
 
-The same timeout controls how long the disconnected/reconnecting live notification stays visible.
+The same timeout controls how long the disconnected/reconnecting notification stays visible. If the timeout is exceeded, the ride closes automatically. **Continue previous** can reopen the last ride within 24 hours when the newly created ride has not accumulated movement; **End ride** closes it manually.
 
-If a pause goes past the timeout, the ride closes automatically. **Continue previous** can reopen the last ride within 24 hours when the newly created ride has not accumulated movement yet. **End ride** closes the current session manually.
+The Statistics screen provides **Day / Week / Month** summaries plus recent rides. **Export JSON** creates a portable local backup and **Import JSON** restores it without replacing scooter connection settings.
 
-### Day / week / month
-
-The Statistics screen aggregates:
-
-- distance;
-- ride count;
-- connected time;
-- max speed;
-- battery % used;
-- battery % charged.
-
-Recent individual rides are listed underneath the period summary.
-
-### Backup
-
-**Export JSON** creates a portable backup of the local ride database. **Import JSON** replaces local statistics from such a backup; scooter pairing/settings are not replaced.
+Ride samples stay live in memory and are persisted in small batches rather than writing SQLite on every telemetry packet.
 
 ---
 
 ## Live notification
 
-When connected, the compact notification keeps a stable field order. Example:
+The notification deliberately gives the limited horizontal space to the values useful while working:
 
 ```text
-🛴 Ninebot Max G30 · 73% · 12.4 km
-27.3 km/h · 31.0 km range · 🟢 Connected     [ 🔐 LOCK ]
+🛴 73% · 12.4 km
+27.3 km/h · 🟢 Connected                 [ 🔐 LOCK ]
 ```
 
-If the scooter sleeps or disconnects, the same ride distance is retained and the notification switches to reconnect state instead of disappearing immediately:
+The distance is the app's current ride/session, not the scooter's temporary trip counter.
+
+If the scooter sleeps or disconnects, the session value is retained:
 
 ```text
-🛴 Ninebot Max G30 · 73% · 12.4 km
-31.0 km range · 🔴 Reconnecting               [ ↻ RECONNECT ]
+🛴 73% · 12.4 km
+🔴 Reconnecting                          [ ↻ RECONNECT ]
 ```
 
-It remains available for the configured ride pause timeout (20/30/60 minutes). A successful reconnect restores the live lock/unlock button and continues the same statistical ride. If the timeout expires, the notification is removed and the ride is closed.
-
-The live channel is silent/high-importance; exact notification ranking is ultimately controlled by Android/OEM firmware.
+It remains available for the configured ride pause timeout. A successful reconnect restores the lock button and continues the same statistical ride.
 
 ---
 
 ## Full-charge sound alert
 
-Enable **Full-charge sound alert** if you want the phone to notify you when the monitored scooter reaches 100% while charging.
+Enable **Full-charge sound alert** to notify the phone when the monitored scooter reaches 100% while charging.
 
-- Separate Android channel: **Full charge alerts**.
-- Sound/vibration can be configured in Android notification settings.
-- Fires once when the observed battery level rises to 100%.
-- Does not fire immediately just because the app starts with a scooter already at 100%.
+- separate Android notification channel;
+- sound/vibration configurable in Android settings;
+- fires once when an observed charge rise reaches 100%;
+- does not fire merely because the app starts while the battery is already at 100%.
 
-Reliable background charge monitoring needs the foreground connection, so enabling the charge alert also enables persistent notification. Turning persistent notification off disables the charge alert too.
+Reliable background charge monitoring needs the foreground connection, so enabling this alert also enables persistent notification.
 
 ---
 
@@ -161,13 +132,13 @@ Reliable background charge monitoring needs the foreground connection, so enabli
 
 **Ninebot Max G30**
 
-The project keeps the known-working G30 BLE transport, SHU-compatible authentication path and lock/unlock packet flow as its compatibility baseline.
+The known-working G30 BLE transport, SHU-compatible authentication and lock/unlock byte sequences are intentionally kept as the compatibility baseline.
 
 ### 🧪 Experimental compatibility
 
-Discovery also accepts compatible Ninebot / Segway BLE devices instead of hard-coding a single advertised name. Some older scooters share the same legacy Proto2 register family and may work with the existing transport.
+Discovery also accepts compatible Ninebot / Segway BLE devices instead of hard-coding one advertised name. Some older scooters share the same legacy Proto2 register family and may work with the current transport.
 
-This is **not SHU-level universal compatibility**. Newer families can use Encryption2/Encryption3 authentication, different board routing or different register layouts. Models are not claimed as tested until verified on hardware.
+This is **not SHU-level universal compatibility**. Newer families can use Encryption2/Encryption3 authentication, different board routing or different register layouts. A model is not claimed as tested until it is verified on hardware.
 
 ---
 
@@ -180,7 +151,6 @@ This is **not SHU-level universal compatibility**. Newer families can use Encryp
 | Current | BMS |
 | Power | calculated from voltage × current |
 | Speed | ESC |
-| Scooter trip | ESC |
 | Odometer | ESC |
 | Remaining range | ESC |
 | Controller temperature | ESC |
@@ -188,7 +158,7 @@ This is **not SHU-level universal compatibility**. Newer families can use Encryp
 | Lock state | read-only Ninebot status register |
 | App ride/session | persisted from odometer deltas |
 
-Unsupported values stay empty instead of being fabricated. BLE writes stay serialized and slower telemetry is interleaved with faster values.
+Unsupported values stay empty instead of being fabricated. BLE writes are serialized and slower telemetry is interleaved with faster values.
 
 ---
 
@@ -205,7 +175,9 @@ Reconnect backoff:
 1 s → 2 s → 5 s → 10 s → 30 s
 ```
 
-The remembered G30 is tried directly by its saved BLE address before scan fallback. A watchdog resets stuck Android GATT attempts. Authenticated identity is verified when the serial is available.
+Most reconnect attempts use direct GATT to the remembered BLE address. Every third failed cycle can use an 8-second balanced scan fallback. Connection and scan generations protect a new session from late Android callbacks belonging to an old GATT/scan, and a watchdog resets stuck attempts.
+
+Connected telemetry uses one small request per scheduler tick: roughly 1 request/second while stopped and up to 2/second while moving. There is no continuous scan while connected.
 
 ---
 
@@ -225,7 +197,7 @@ MainActivity  StatsActivity  ScooterService
 
 - **`NinebotBleClient`** — Nordic UART GATT transport, crypto/authentication, fragmentation and serialized writes.
 - **`ScooterBleManager`** — scanning and connection coordination.
-- **`G30Protocol`** — Ninebot packet/register knowledge and telemetry parsing.
+- **`G30Protocol`** — register knowledge and telemetry parsing.
 - **`ScooterRepository`** — connection, identity, reconnect, telemetry and commands.
 - **`RideStatsTracker` / `RideStatsStore`** — ride continuity and local statistics database.
 - **`ScooterService`** — foreground lifetime, live notification and full-charge alert.
@@ -244,17 +216,13 @@ No location permission is requested on Android 12+.
 
 ---
 
-## Battery usage
+## Battery and size
 
-Designed for multi-hour courier use:
+The project deliberately avoids heavyweight runtime dependencies: it uses Android framework Bluetooth, SQLite, JSON and UI APIs directly; JUnit exists only in the test configuration and is not packaged in the APK.
 
-- no permanent CPU wake lock;
-- no endless aggressive scan;
-- serialized GATT writes;
-- adaptive telemetry polling;
-- throttled notification refresh;
-- statistics writes batched/throttled instead of writing on every BLE packet;
-- reconnect backoff.
+Published APKs are **release builds**, optimized by R8 with code shrinking/obfuscation and Android resource shrinking. CI also builds a debug APK and reports debug vs release size so accidental binary growth is visible.
+
+Runtime work is kept small with no permanent wake lock, reconnect backoff, serialized GATT writes, adaptive polling, throttled notification refresh, batched statistics persistence and no endless aggressive scan.
 
 ---
 
@@ -270,17 +238,10 @@ Requirements: **JDK 17 · Android SDK 35 · Gradle 8.9**
 
 ```bash
 gradle :app:assembleDebug
+gradle :app:assembleRelease
 ```
 
-Every push to `main` runs lint, unit tests, APK build, signature verification, artifact upload and GitHub Release publication.
-
----
-
-## Releases
-
-Current feature release: **v0.10.0**
-
-➡️ [**Download the latest APK**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
+Every push to `main` runs release lint, unit tests, debug + optimized release builds, signature verification, size reporting, artifact upload and GitHub Release publication.
 
 ---
 
