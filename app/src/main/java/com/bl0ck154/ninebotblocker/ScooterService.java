@@ -23,9 +23,6 @@ public final class ScooterService extends Service implements ScooterRepository.L
     public static final String ACTION_START = "com.bl0ck154.ninebotblocker.START";
     public static final String ACTION_MONITOR = "com.bl0ck154.ninebotblocker.MONITOR";
     public static final String ACTION_STOP_NOTIFICATION = "com.bl0ck154.ninebotblocker.STOP_NOTIFICATION";
-    public static final String ACTION_STOP = "com.bl0ck154.ninebotblocker.STOP";
-    public static final String ACTION_LOCK = "com.bl0ck154.ninebotblocker.LOCK";
-    public static final String ACTION_UNLOCK = "com.bl0ck154.ninebotblocker.UNLOCK";
     public static final String ACTION_TOGGLE = "com.bl0ck154.ninebotblocker.TOGGLE";
 
     public static final String LIVE_CHANNEL_ID = "scooter_live_priority_v2";
@@ -136,8 +133,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
             return START_NOT_STICKY;
         }
 
-        boolean commandAction = ACTION_LOCK.equals(action) || ACTION_UNLOCK.equals(action)
-                || ACTION_TOGGLE.equals(action);
+        boolean commandAction = ACTION_TOGGLE.equals(action);
         if (!commandAction && !ACTION_MONITOR.equals(action)
                 && (current.connectionState != ScooterConnectionState.READY
                 || !current.telemetry.isConnected())) {
@@ -153,29 +149,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 && current.telemetry.isConnected();
         hadReadyConnection = hadReadyConnection || currentReady;
 
-        if (ACTION_STOP.equals(action)) {
-            repository.setPersistentEnabled(false);
-            repository.setFullChargeAlertEnabled(false);
-            repository.disconnect();
-            disconnectedSince = 0L;
-            main.removeCallbacks(disconnectExpiryRunnable);
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            foregroundStarted = false;
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
-        if (ACTION_LOCK.equals(action)) {
-            monitoringMode = backgroundWanted;
-            transientAction = !backgroundWanted;
-            transientTarget = true;
-            repository.lockScooter();
-        } else if (ACTION_UNLOCK.equals(action)) {
-            monitoringMode = backgroundWanted;
-            transientAction = !backgroundWanted;
-            transientTarget = false;
-            repository.unlockScooter();
-        } else if (ACTION_TOGGLE.equals(action)) {
+        if (ACTION_TOGGLE.equals(action)) {
             monitoringMode = backgroundWanted;
             transientAction = !backgroundWanted;
             Boolean locked = repository.snapshot().telemetry.getLocked();
