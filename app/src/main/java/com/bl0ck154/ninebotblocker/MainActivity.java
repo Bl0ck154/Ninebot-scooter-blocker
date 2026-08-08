@@ -243,7 +243,10 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                 return false;
             }
         });
-        scroll.setOnTouchListener((v, event) -> gesture.onTouchEvent(event));
+        scroll.setOnTouchListener((v, event) -> {
+            gesture.onTouchEvent(event);
+            return false;
+        });
 
         setContentView(scroll);
         if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
