@@ -1,7 +1,6 @@
 package com.bl0ck154.ninebotblocker;
 
 import java.util.Arrays;
-import java.util.Locale;
 
 /** Packet shapes taken directly from ScooterHacking Utility 2.7 / Ninebot protocol. */
 public final class ShuNinebotProtocol {
@@ -18,10 +17,8 @@ public final class ShuNinebotProtocol {
     public static final int CMD_PING = 0x5C;
     public static final int CMD_PAIR = 0x5D;
 
-    public static final int REG_LOCK_STATE = 0x1D;
     public static final int REG_LOCK = 0x70;
     public static final int REG_UNLOCK = 0x71;
-    public static final int LOCK_STATE_BIT = 0x0002;
 
     /** Exact 16-byte application key embedded in SHU 2.7's pairing command. */
     public static final byte[] SHU_APP_KEY = hex("4AEEBD73E2161C112D065A49CC6E8BB7");
@@ -77,25 +74,6 @@ public final class ShuNinebotProtocol {
         });
     }
 
-    /** Read two bytes from ESC register 0x1D; bit 0x0002 is the software-lock state. */
-    public static byte[] readLockStatePacket() {
-        return wrapCryptoPlain(new byte[]{
-                (byte) SOURCE_PHONE,
-                (byte) TARGET_ESC,
-                (byte) CMD_READ_REGISTER,
-                (byte) REG_LOCK_STATE,
-                0x02
-        });
-    }
-
-    public static Boolean lockStateFromResponse(byte[] packet) {
-        if (!isPacket(packet) || index(packet) != REG_LOCK_STATE) return null;
-        byte[] payload = payload(packet);
-        if (payload.length < 2) return null;
-        int value = (payload[0] & 0xFF) | ((payload[1] & 0xFF) << 8);
-        return (value & LOCK_STATE_BIT) != 0;
-    }
-
     /**
      * SHU NinebotCrypto wrapper before encryption: 5A A5, data length, then the
      * logical command bytes. data length is command.length - 4.
@@ -136,16 +114,6 @@ public final class ShuNinebotProtocol {
     public static int encryptedPacketLengthFromHeader(byte[] data) {
         if (data == null || data.length < 3) return -1;
         return (data[2] & 0xFF) + 13;
-    }
-
-    public static String hex(byte[] bytes) {
-        if (bytes == null) return "";
-        StringBuilder sb = new StringBuilder(bytes.length * 3);
-        for (byte b : bytes) {
-            if (sb.length() > 0) sb.append(' ');
-            sb.append(String.format(Locale.US, "%02X", b & 0xFF));
-        }
-        return sb.toString();
     }
 
     private static byte[] hex(String value) {
