@@ -17,7 +17,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.GestureDetector;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.ArrayAdapter;
@@ -78,7 +80,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     @Override protected void onStop() {
         repository.removeListener(this);
-        repository.setUiActive(false);
+        if (hasBlePermissions()) repository.setUiActive(false);
         super.onStop();
     }
 
@@ -130,9 +132,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         hero.addView(batteryText);
         root.addView(hero, full(dp(8)));
 
-        TextView[] rideTrip = addMetricPair(root, "Ride", "Trip");
-        rideText = rideTrip[0];
-        tripText = rideTrip[1];
+        TextView[] speedSession = addMetricPair(root, "Speed", "Session");
+        rideText = speedSession[0];
+        tripText = speedSession[1];
 
         TextView[] rangeTotal = addMetricPair(root, "Range", "Total");
         rangeText = rangeTotal[0];
@@ -162,7 +164,13 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             if (Boolean.TRUE.equals(locked)) repository.unlockScooter();
             else repository.lockScooter();
         });
-        root.addView(lockButton, full(dp(10)));
+        root.addView(lockButton, full(dp(8)));
+
+        Button statsButton = secondaryButton("Statistics  ›");
+        statsButton.setTextColor(ACCENT);
+        statsButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statsButton.setOnClickListener(v -> openStatistics());
+        root.addView(statsButton, full(dp(10)));
 
         LinearLayout settingsCard = cardContainer();
         settingsCard.setPadding(dp(14), dp(2), dp(8), dp(2));
@@ -224,8 +232,25 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         actionRow.addView(shortcutButton, weightedWithMargins(false));
         root.addView(actionRow, full(0));
 
+        GestureDetector gesture = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent e) { return true; }
+            @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                if (e1 != null && e2 != null && e1.getX() - e2.getX() > dp(90)
+                        && Math.abs(velocityX) > Math.abs(velocityY)) {
+                    openStatistics();
+                    return true;
+                }
+                return false;
+            }
+        });
+        scroll.setOnTouchListener((v, event) -> gesture.onTouchEvent(event));
+
         setContentView(scroll);
         if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
+    }
+
+    private void openStatistics() {
+        startActivity(new Intent(this, StatsActivity.class));
     }
 
     private TextView[] addMetricPair(LinearLayout root, String leftLabel, String rightLabel) {
@@ -318,7 +343,8 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
         batteryText.setText(formatBattery(t));
         rideText.setText(t.getSpeed() == null ? "—" : f("%.1f km/h", t.getSpeed()));
-        tripText.setText(t.getTripDistance() == null ? "—" : f("%.2f km", t.getTripDistance()));
+        double sessionKm = snapshot.rideStats == null ? 0.0 : snapshot.rideStats.currentDistanceKm();
+        tripText.setText(f("%.2f km", sessionKm));
         rangeText.setText(t.getRemainingRange() == null ? "—" : f("%.1f km", t.getRemainingRange()));
         totalText.setText(t.getTotalDistance() == null ? "—" : f("%,.1f km", t.getTotalDistance()));
         tempText.setText(formatTemperature(t));
