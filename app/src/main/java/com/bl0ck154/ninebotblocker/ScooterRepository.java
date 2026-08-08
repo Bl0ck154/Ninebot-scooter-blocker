@@ -21,6 +21,8 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     public static final String PREF_PERSISTENT = "persistent_notification";
     public static final String PREF_FULL_CHARGE_ALERT = "full_charge_alert";
 
+    private static final long RECONNECT_WATCHDOG_MS = 12000L;
+
     public interface Listener { void onSnapshot(Snapshot snapshot); }
     public interface DiscoveryListener {
         void onDevice(String address, String name, int rssi);
@@ -83,6 +85,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private Boolean pendingDesiredLock;
 
     private final Runnable reconnectRunnable = this::runReconnectAttempt;
+    private final Runnable reconnectWatchdog = this::onReconnectWatchdog;
     private final Runnable pollRunnable = this::pollOnce;
 
     private ScooterRepository(Context context) {
@@ -127,6 +130,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             if (isAutoConnectEnabled()) connectIfNeeded();
         } else if (!isPersistentEnabled() && !isFullChargeAlertEnabled()) {
             stopPolling();
+            cancelReconnect();
             ble.disconnectSilently();
             telemetry.setConnected(false);
             setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
@@ -165,8 +169,20 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     public void connectIfNeeded() {
         if (!hasRememberedScooter() || ble.isReady()
                 || state == ScooterConnectionState.CONNECTING
-                || state == ScooterConnectionState.CONNECTED
-                || state == ScooterConnectionState.RECONNECTING) return;
+                || state == ScooterConnectionState.CONNECTED) return;
+
+        if (state == ScooterConnectionState.RECONNECTING) {
+            // A delayed backoff is not an active BLE operation. When the UI comes back,
+            // kick the saved scooter immediately instead of showing RECONNECTING forever.
+            if (!ble.isConnectionAttemptActive()) {
+                main.removeCallbacks(reconnectRunnable);
+                runReconnectAttempt();
+            } else {
+                armReconnectWatchdog();
+            }
+            return;
+        }
+
         identityVerified = false;
         ble.connect(address(), prefs.getString(PREF_NAME, null), false);
     }
@@ -258,6 +274,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     @Override public void onReady(byte[] serialBytes) {
+        cancelReconnectWatchdog();
         String incomingSerial = serialString(serialBytes);
         String rememberedSerial = prefs.getString(PREF_SERIAL, null);
         if (rememberedSerial != null && !rememberedSerial.trim().isEmpty()
@@ -305,6 +322,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     @Override public void onDisconnected(String reason) {
+        cancelReconnectWatchdog();
         identityVerified = false;
         telemetry.setConnected(false);
         stopPolling();
@@ -323,9 +341,11 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private void scheduleReconnect() {
         if (!shouldStayConnected() || !isAutoConnectEnabled() || !hasRememberedScooter()) return;
         stopPolling();
+        cancelReconnectWatchdog();
         main.removeCallbacks(reconnectRunnable);
         int index = Math.min(reconnectAttempt, reconnectDelays.length - 1);
         long delay = reconnectDelays[index];
+        if (uiActive) delay = Math.min(delay, 10000L);
         reconnectAttempt++;
         setState(ScooterConnectionState.RECONNECTING, "Reconnecting…");
         main.postDelayed(reconnectRunnable, delay);
@@ -335,11 +355,17 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         if (!shouldStayConnected() || !isAutoConnectEnabled() || !hasRememberedScooter()) return;
         final String savedAddress = address();
         final String savedName = prefs.getString(PREF_NAME, null);
-        if (reconnectAttempt % 3 == 0) {
-            identityVerified = false;
+        identityVerified = false;
+
+        // G30 exposes a stable BLE address, so direct reconnect is both faster and cheaper
+        // than scanning. Every third attempt uses discovery as a fallback for devices whose
+        // advertisement/address behavior differs.
+        if (reconnectAttempt % 3 != 0) {
             ble.connect(savedAddress, savedName, true);
+            armReconnectWatchdog();
             return;
         }
+
         ble.startScan(true, 8000, new ScooterBleManager.ScanListener() {
             private boolean matched;
             @Override public void onDeviceFound(String foundAddress, String foundName, int rssi) {
@@ -352,13 +378,40 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
                 ble.stopScan();
                 identityVerified = false;
                 ble.connect(foundAddress, foundName, true);
+                armReconnectWatchdog();
             }
-            @Override public void onScanFinished() { if (!matched) scheduleReconnect(); }
-            @Override public void onScanError(String message) { if (!matched) scheduleReconnect(); }
+            @Override public void onScanFinished() {
+                cancelReconnectWatchdog();
+                if (!matched) scheduleReconnect();
+            }
+            @Override public void onScanError(String message) {
+                cancelReconnectWatchdog();
+                if (!matched) scheduleReconnect();
+            }
         });
+        armReconnectWatchdog();
     }
 
-    private void cancelReconnect() { main.removeCallbacks(reconnectRunnable); }
+    private void armReconnectWatchdog() {
+        main.removeCallbacks(reconnectWatchdog);
+        if (shouldStayConnected() && !ble.isReady()) {
+            main.postDelayed(reconnectWatchdog, RECONNECT_WATCHDOG_MS);
+        }
+    }
+
+    private void cancelReconnectWatchdog() { main.removeCallbacks(reconnectWatchdog); }
+
+    private void onReconnectWatchdog() {
+        if (!shouldStayConnected() || !isAutoConnectEnabled() || ble.isReady()) return;
+        ble.disconnectSilently();
+        setState(ScooterConnectionState.RECONNECTING, "Reconnect attempt timed out…");
+        scheduleReconnect();
+    }
+
+    private void cancelReconnect() {
+        main.removeCallbacks(reconnectRunnable);
+        cancelReconnectWatchdog();
+    }
 
     private void startPolling() {
         stopPolling();
