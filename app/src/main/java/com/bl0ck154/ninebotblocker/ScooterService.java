@@ -16,7 +16,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.widget.RemoteViews;
 
-import java.util.ArrayList;
 import java.util.Locale;
 
 /** Foreground owner for live scooter notification and full-charge monitoring. */
@@ -254,14 +253,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private Notification buildNotification(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
         boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
-        String model = snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName;
-        ArrayList<String> titleParts = new ArrayList<>();
-        titleParts.add("🛴 " + model);
-        if (t.getBatteryPercent() != null) titleParts.add(t.getBatteryPercent() + "%");
-        if (snapshot.rideStats != null && snapshot.rideStats.currentRide != null) {
-            titleParts.add(String.format(Locale.US, "%.1f km", snapshot.rideStats.currentRide.distanceKm));
-        }
-        String title = String.join(" · ", titleParts);
+        String title = notificationTitle(snapshot);
         String text = notificationText(snapshot);
         String actionLabel = ready
                 ? (Boolean.TRUE.equals(t.getLocked()) ? "🔓 UNLOCK" : "🔐 LOCK")
@@ -299,31 +291,30 @@ public final class ScooterService extends Service implements ScooterRepository.L
         return builder.build();
     }
 
+    private String notificationTitle(ScooterRepository.Snapshot snapshot) {
+        StringBuilder out = new StringBuilder("🛴");
+        Integer battery = snapshot.telemetry.getBatteryPercent();
+        if (battery != null) out.append(' ').append(battery).append('%');
+        double rideKm = snapshot.rideStats == null ? 0.0 : snapshot.rideStats.currentDistanceKm();
+        out.append(" · ").append(String.format(Locale.US, "%.1f km", rideKm));
+        return out.toString();
+    }
+
     private String notificationText(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
         boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
-        ArrayList<String> parts = new ArrayList<>();
-
         if (ready) {
-            parts.add(t.getSpeed() == null ? "— km/h"
-                    : String.format(Locale.US, "%.1f km/h", t.getSpeed()));
-            parts.add(t.getRemainingRange() == null ? "— km range"
-                    : String.format(Locale.US, "%.1f km range", t.getRemainingRange()));
-            parts.add("🟢 Connected");
-        } else {
-            if (t.getRemainingRange() != null) {
-                parts.add(String.format(Locale.US, "%.1f km range", t.getRemainingRange()));
-            }
-            if (snapshot.connectionState == ScooterConnectionState.RECONNECTING
-                    || snapshot.connectionState == ScooterConnectionState.CONNECTING
-                    || snapshot.connectionState == ScooterConnectionState.SCANNING
-                    || snapshot.connectionState == ScooterConnectionState.CONNECTED) {
-                parts.add("🔴 Reconnecting");
-            } else {
-                parts.add("🔴 Disconnected");
-            }
+            String speed = t.getSpeed() == null ? "— km/h"
+                    : String.format(Locale.US, "%.1f km/h", t.getSpeed());
+            return speed + " · 🟢 Connected";
         }
-        return String.join(" · ", parts);
+        if (snapshot.connectionState == ScooterConnectionState.RECONNECTING
+                || snapshot.connectionState == ScooterConnectionState.CONNECTING
+                || snapshot.connectionState == ScooterConnectionState.SCANNING
+                || snapshot.connectionState == ScooterConnectionState.CONNECTED) {
+            return "🔴 Reconnecting";
+        }
+        return "🔴 Disconnected";
     }
 
     private void handleChargeAlert(ScooterRepository.Snapshot snapshot) {
