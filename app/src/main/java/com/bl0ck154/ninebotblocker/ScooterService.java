@@ -137,7 +137,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         boolean commandAction = ACTION_LOCK.equals(action) || ACTION_UNLOCK.equals(action)
                 || ACTION_TOGGLE.equals(action);
-        if (!commandAction && (current.connectionState != ScooterConnectionState.READY
+        if (!commandAction && !ACTION_MONITOR.equals(action)
+                && (current.connectionState != ScooterConnectionState.READY
                 || !current.telemetry.isConnected())) {
             if (ACTION_START.equals(action)) repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
@@ -147,8 +148,9 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         startForeground(NOTIFICATION_ID, buildNotification(current));
         foregroundStarted = true;
-        hadReadyConnection = current.connectionState == ScooterConnectionState.READY
+        boolean currentReady = current.connectionState == ScooterConnectionState.READY
                 && current.telemetry.isConnected();
+        hadReadyConnection = hadReadyConnection || currentReady;
 
         if (ACTION_STOP.equals(action)) {
             repository.setPersistentEnabled(false);
