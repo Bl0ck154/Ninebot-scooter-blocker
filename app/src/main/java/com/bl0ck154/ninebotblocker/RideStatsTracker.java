@@ -27,18 +27,18 @@ public final class RideStatsTracker {
         public final RideStatsStore.RideRecord previousRide;
         public final boolean canContinuePrevious;
         public final int pauseMinutes;
+        private final double liveDistanceKm;
 
         Snapshot(RideStatsStore.RideRecord currentRide, RideStatsStore.RideRecord previousRide,
-                 boolean canContinuePrevious, int pauseMinutes) {
+                 boolean canContinuePrevious, int pauseMinutes, double liveDistanceKm) {
             this.currentRide = currentRide;
             this.previousRide = previousRide;
             this.canContinuePrevious = canContinuePrevious;
             this.pauseMinutes = pauseMinutes;
+            this.liveDistanceKm = liveDistanceKm;
         }
 
-        public double currentDistanceKm() {
-            return currentRide == null ? 0.0 : currentRide.distanceKm;
-        }
+        public double currentDistanceKm() { return liveDistanceKm; }
     }
 
     private final RideStatsStore store;
@@ -131,8 +131,9 @@ public final class RideStatsTracker {
         Double speed = telemetry.getSpeed();
         if (speed != null) pendingMaxSpeed = Math.max(pendingMaxSpeed, Math.max(0.0, speed));
 
-        boolean meaningfulChange = pendingDistance > 0.0 || pendingDischarged > 0.0 || pendingCharged > 0.0;
-        if (meaningfulChange || now - lastWriteAt >= STATS_WRITE_INTERVAL_MS) flushPending(now);
+        // Keep live values in RAM and persist them in one small transaction every five seconds.
+        // Disconnect/end/export paths force a final flush, so no ride data is intentionally lost.
+        if (now - lastWriteAt >= STATS_WRITE_INTERVAL_MS) flushPending(now);
     }
 
     private void flushPending(long now) {
@@ -182,7 +183,7 @@ public final class RideStatsTracker {
     }
 
     public Snapshot snapshot(String key) {
-        if (key == null) return new Snapshot(null, null, false, getPauseMinutes());
+        if (key == null) return new Snapshot(null, null, false, getPauseMinutes(), 0.0);
         RideStatsStore.RideRecord open = store.openRide(key);
         long now = System.currentTimeMillis();
         if (open != null && !connected && now - open.lastSeenAt > pauseTimeoutMs()) {
@@ -193,7 +194,11 @@ public final class RideStatsTracker {
         RideStatsStore.RideRecord previous = store.lastClosedRide(key);
         boolean canContinue = previous != null && now - previous.lastSeenAt <= CONTINUE_WINDOW_MS
                 && (open == null || !open.counted);
-        return new Snapshot(open, previous, canContinue, getPauseMinutes());
+        double liveDistance = open == null ? 0.0 : open.distanceKm;
+        if (open != null && connected && key.equals(scooterKey) && open.id == currentRideId) {
+            liveDistance += pendingDistance;
+        }
+        return new Snapshot(open, previous, canContinue, getPauseMinutes(), liveDistance);
     }
 
     public boolean endRideNow(String key) {
