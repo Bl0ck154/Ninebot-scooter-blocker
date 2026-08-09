@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Code audit/refactor release. Published APKs are now real optimized release builds with R8 code shrinking, optimization and resource shrinking while retaining the existing signing identity for update compatibility. Dead legacy telemetry/protocol paths were removed, ride-stat persistence was batched to avoid SQLite writes on every odometer change, and the Statistics screen no longer performs full database refreshes every second. G30 authentication/crypto and lock/unlock byte sequences are unchanged.'
+          NOTES='BLE signal + charging release. Adds live RSSI signal bars to the dashboard and persistent notification, conservative G30 charging detection from sustained stationary BMS charge current, an animated charging indicator, and a short low-key double-beep when a monitored charge reaches 100%. RSSI reads are serialized with the existing GATT write queue. No unverified scooter-side buzzer/no-op command was added, and the known-good SHU authentication plus lock/unlock packet path remains unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
