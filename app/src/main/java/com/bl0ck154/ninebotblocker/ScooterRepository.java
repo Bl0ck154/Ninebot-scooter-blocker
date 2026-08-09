@@ -76,6 +76,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ScooterBleManager ble;
     private final ScooterTelemetry telemetry = new ScooterTelemetry();
+    private final ChargingDetector chargingDetector = new ChargingDetector();
     private final RideStatsTracker rideStats;
     private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private final long[] reconnectDelays = {1000, 2000, 5000, 10000, 30000};
@@ -192,6 +193,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
             cancelReconnect();
             ble.disconnectSilently();
             identityVerified = false;
+            clearConnectionDerivedTelemetry();
             telemetry.setConnected(false);
             rideStats.onDisconnected();
             setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
@@ -224,6 +226,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         ble.disconnectSilently();
         identityVerified = false;
+        clearConnectionDerivedTelemetry();
         telemetry.setConnected(false);
         rideStats.onDisconnected();
         setState(ScooterConnectionState.DISCONNECTED, "Disconnected");
@@ -252,6 +255,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         cancelReconnect();
         stopPolling();
         identityVerified = false;
+        clearConnectionDerivedTelemetry();
         telemetry.setConnected(false);
         rideStats.onDisconnected();
         ble.disconnectSilently();
@@ -296,6 +300,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         ble.disconnectSilently();
         identityVerified = false;
+        clearConnectionDerivedTelemetry();
         rideStats.onDisconnected();
         ble.startScan(false, 10000, new ScooterBleManager.ScanListener() {
             @Override public void onDeviceFound(String address, String name, int rssi) {
@@ -321,6 +326,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         rideStats.onDisconnected();
         identityVerified = false;
         pendingDesiredLock = null;
+        clearConnectionDerivedTelemetry();
         telemetry.setLocked(null);
         prefs.edit()
                 .putString(PREF_ADDRESS, newAddress)
@@ -344,6 +350,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         if (rememberedSerial != null && !rememberedSerial.trim().isEmpty()
                 && incomingSerial != null && !rememberedSerial.equals(incomingSerial)) {
             identityVerified = false;
+            clearConnectionDerivedTelemetry();
             telemetry.setConnected(false);
             rideStats.onDisconnected();
             ble.disconnectSilently();
@@ -362,9 +369,9 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         rideStats.onConnected(scooterKey());
         setState(ScooterConnectionState.READY, "Connected");
 
-        // Give a freshly authenticated/woken G30 a short quiet period. v0.10.0 sent three
-        // telemetry requests immediately after READY, which is unnecessary and can make a
-        // just-woken BLE stack less stable. Startup reads are now serialized by pollOnce().
+        // Keep startup gentle. RSSI is an Android GATT read and is queued behind writes by the
+        // transport, so requesting it here does not collide with protocol traffic.
+        ble.requestRssi();
         startPolling();
         sendPendingAction();
 
@@ -375,9 +382,19 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     @Override public void onPacket(byte[] packet) {
         if (identityVerified && G30Protocol.applyTelemetryPacket(packet, telemetry)) {
+            telemetry.setCharging(chargingDetector.update(
+                    telemetry.getBatteryCurrent(), telemetry.getSpeed(), System.currentTimeMillis()));
             rideStats.onTelemetry(scooterKey(), telemetry);
             notifyListeners();
         }
+    }
+
+    @Override public void onRssi(int rssi) {
+        if (!identityVerified || !telemetry.isConnected()) return;
+        // BLE RSSI is normally negative dBm. Ignore obvious platform/error sentinels.
+        if (rssi > 0 || rssi < -127) return;
+        telemetry.setRssi(rssi);
+        notifyListeners();
     }
 
     @Override public void onActionResult(boolean success, Boolean locked, String message) {
@@ -395,6 +412,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     @Override public void onDisconnected(String reason) {
         cancelReconnectWatchdog();
         identityVerified = false;
+        clearConnectionDerivedTelemetry();
         telemetry.setConnected(false);
         rideStats.onDisconnected();
         stopPolling();
@@ -404,6 +422,12 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         } else {
             setState(ScooterConnectionState.DISCONNECTED, status);
         }
+    }
+
+    private void clearConnectionDerivedTelemetry() {
+        telemetry.setRssi(null);
+        telemetry.setCharging(null);
+        chargingDetector.reset();
     }
 
     private boolean shouldStayConnected() {
@@ -514,6 +538,10 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         }
 
         pollTick++;
+        // RSSI is sampled infrequently and serialized by NinebotBleClient so it cannot overlap
+        // the characteristic write queue. This keeps the feature cheap while still useful.
+        if (pollTick % 10 == 0) ble.requestRssi();
+
         // Session distance is odometer-based, so refresh it predictably every five ticks.
         if (pollTick % 20 == 0) {
             switch (slowPollIndex++ % 3) {
