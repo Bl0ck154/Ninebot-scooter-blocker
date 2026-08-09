@@ -26,6 +26,7 @@ public final class NinebotBleClient {
         void onActionResult(boolean success, Boolean locked, String message);
         default void onTransportConnected() {}
         default void onPacket(byte[] packet) {}
+        default void onRssi(int rssi) {}
     }
 
     public static final UUID UART_SERVICE = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
@@ -46,6 +47,8 @@ public final class NinebotBleClient {
     private boolean cancelled;
     private boolean ready;
     private boolean writeInFlight;
+    private boolean rssiReadInFlight;
+    private boolean rssiRequested;
     private boolean initAccepted;
     private boolean pingAccepted;
     private boolean pairAccepted;
@@ -115,6 +118,8 @@ public final class NinebotBleClient {
         cancelled = false;
         ready = false;
         writeInFlight = false;
+        rssiReadInFlight = false;
+        rssiRequested = false;
         initAccepted = false;
         pingAccepted = false;
         pairAccepted = false;
@@ -151,6 +156,13 @@ public final class NinebotBleClient {
         return true;
     }
 
+    /** Queue a connected-device RSSI read without overlapping an active GATT write. */
+    public void requestRssi() {
+        if (!isReady()) return;
+        rssiRequested = true;
+        maybeStartRssiRead();
+    }
+
     @SuppressLint("MissingPermission") public void cancel() { closeInternal(true); }
     @SuppressLint("MissingPermission") public void closeSilently() { closeInternal(false); }
 
@@ -159,6 +171,8 @@ public final class NinebotBleClient {
         cancelled = true;
         ready = false;
         writeInFlight = false;
+        rssiReadInFlight = false;
+        rssiRequested = false;
         pendingDesiredLock = null;
         requestedLocked = null;
         writeQueue.clear();
@@ -190,8 +204,7 @@ public final class NinebotBleClient {
                 main.post(listener::onTransportConnected);
                 status("Connecting…");
                 // Keep Android's normal BLE connection parameters. The app only exchanges tiny
-                // control/telemetry packets, so forcing HIGH and then BALANCED priority buys
-                // little while adding a connection-parameter renegotiation during scooter wake.
+                // control/telemetry packets, so forcing priority renegotiation is unnecessary.
                 if (!g.discoverServices()) failConnection("Could not open scooter Bluetooth services.");
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) failConnection("Scooter disconnected.");
         }
@@ -233,6 +246,13 @@ public final class NinebotBleClient {
             if (cancelled || g != gatt) return;
             writeInFlight = false;
             if (statusCode != BluetoothGatt.GATT_SUCCESS) { failConnection("Bluetooth write failed."); return; }
+            writeNextChunk();
+        }
+
+        @Override public void onReadRemoteRssi(BluetoothGatt g, int rssi, int statusCode) {
+            if (cancelled || g != gatt) return;
+            rssiReadInFlight = false;
+            if (statusCode == BluetoothGatt.GATT_SUCCESS) main.post(() -> listener.onRssi(rssi));
             writeNextChunk();
         }
     };
@@ -342,15 +362,29 @@ public final class NinebotBleClient {
 
     @SuppressLint("MissingPermission")
     private void writeNextChunk() {
-        if (cancelled || writeInFlight || gatt == null || rx == null) return;
+        if (cancelled || writeInFlight || rssiReadInFlight || gatt == null || rx == null) return;
         byte[] chunk = writeQueue.poll();
-        if (chunk == null) return;
+        if (chunk == null) {
+            maybeStartRssiRead();
+            return;
+        }
         writeInFlight = true;
         rx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rx.setValue(chunk);
         boolean accepted;
         try { accepted = gatt.writeCharacteristic(rx); } catch (Exception e) { accepted = false; }
         if (!accepted) { writeInFlight = false; failConnection("Android rejected the Bluetooth write."); }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void maybeStartRssiRead() {
+        if (cancelled || !ready || gatt == null || !rssiRequested || writeInFlight
+                || rssiReadInFlight || !writeQueue.isEmpty()) return;
+        rssiRequested = false;
+        rssiReadInFlight = true;
+        boolean accepted;
+        try { accepted = gatt.readRemoteRssi(); } catch (Exception e) { accepted = false; }
+        if (!accepted) rssiReadInFlight = false;
     }
 
     private void failConnection(String message) {
