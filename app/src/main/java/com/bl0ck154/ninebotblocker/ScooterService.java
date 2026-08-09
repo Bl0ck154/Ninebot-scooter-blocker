@@ -7,9 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioAttributes;
-import android.media.RingtoneManager;
-import android.net.Uri;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -26,11 +25,14 @@ public final class ScooterService extends Service implements ScooterRepository.L
     public static final String ACTION_TOGGLE = "com.bl0ck154.ninebotblocker.TOGGLE";
 
     public static final String LIVE_CHANNEL_ID = "scooter_live_priority_v2";
-    public static final String CHARGE_CHANNEL_ID = "scooter_charge_alerts";
+    public static final String CHARGE_CHANNEL_ID = "scooter_charge_alerts_v2";
 
     private static final int NOTIFICATION_ID = 15430;
     private static final int CHARGE_NOTIFICATION_ID = 15431;
     private static final long NOTIFICATION_THROTTLE_MS = 1500;
+    private static final int SIGNAL_GREEN = 0xFF007E79;
+    private static final int SIGNAL_RED = 0xFFB42318;
+    private static final int SIGNAL_MUTED = 0xFF5F6368;
     private static volatile boolean running;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -45,7 +47,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private boolean hadReadyConnection;
 
     private Integer lastBatteryPercent;
-    private boolean chargeRiseObserved;
+    private boolean chargeSessionObserved;
     private boolean fullChargeAlertSent;
 
     private final Runnable notificationRunnable = () -> {
@@ -241,6 +243,10 @@ public final class ScooterService extends Service implements ScooterRepository.L
         RemoteViews compact = new RemoteViews(getPackageName(), R.layout.notification_scooter);
         compact.setTextViewText(R.id.notification_title, title);
         compact.setTextViewText(R.id.notification_text, text);
+        Integer rssi = ready ? t.getRssi() : null;
+        compact.setTextViewText(R.id.notification_signal, BleSignal.bars(rssi));
+        compact.setTextColor(R.id.notification_signal,
+                rssi == null ? SIGNAL_MUTED : (BleSignal.weak(rssi) ? SIGNAL_RED : SIGNAL_GREEN));
         compact.setTextViewText(R.id.notification_lock_action, actionLabel);
         compact.setOnClickPendingIntent(R.id.notification_lock_action, action);
 
@@ -266,8 +272,15 @@ public final class ScooterService extends Service implements ScooterRepository.L
     }
 
     private String notificationTitle(ScooterRepository.Snapshot snapshot) {
-        StringBuilder out = new StringBuilder("🛴");
-        Integer battery = snapshot.telemetry.getBatteryPercent();
+        ScooterTelemetry telemetry = snapshot.telemetry;
+        StringBuilder out = new StringBuilder();
+        if (telemetry.isCharging()) {
+            boolean alt = ((System.currentTimeMillis() / 1500L) & 1L) == 0L;
+            out.append(alt ? "🔋" : "⚡");
+        } else {
+            out.append("🛴");
+        }
+        Integer battery = telemetry.getBatteryPercent();
         if (battery != null) out.append(' ').append(battery).append('%');
         double rideKm = snapshot.rideStats == null ? 0.0 : snapshot.rideStats.currentDistanceKm();
         out.append(" · ").append(String.format(Locale.US, "%.1f km", rideKm));
@@ -280,7 +293,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         if (ready) {
             String speed = t.getSpeed() == null ? "— km/h"
                     : String.format(Locale.US, "%.1f km/h", t.getSpeed());
-            return speed + " · 🟢 Connected";
+            return t.isCharging() ? "Charging · " + speed : speed + " · 🟢 Connected";
         }
         if (snapshot.connectionState == ScooterConnectionState.RECONNECTING
                 || snapshot.connectionState == ScooterConnectionState.CONNECTING
@@ -292,25 +305,25 @@ public final class ScooterService extends Service implements ScooterRepository.L
     }
 
     private void handleChargeAlert(ScooterRepository.Snapshot snapshot) {
-        if (!snapshot.fullChargeAlert || !snapshot.telemetry.isConnected()) {
-            if (!snapshot.fullChargeAlert) {
-                lastBatteryPercent = null;
-                chargeRiseObserved = false;
-                fullChargeAlertSent = false;
-            }
+        if (!snapshot.fullChargeAlert) {
+            lastBatteryPercent = null;
+            chargeSessionObserved = false;
+            fullChargeAlertSent = false;
             return;
         }
+        if (!snapshot.telemetry.isConnected()) return;
 
         Integer battery = snapshot.telemetry.getBatteryPercent();
         if (battery == null) return;
 
         if (battery <= 95) {
             fullChargeAlertSent = false;
-            chargeRiseObserved = false;
+            chargeSessionObserved = false;
         }
-        if (lastBatteryPercent != null && battery > lastBatteryPercent) chargeRiseObserved = true;
+        if (snapshot.telemetry.isCharging()) chargeSessionObserved = true;
+        if (lastBatteryPercent != null && battery > lastBatteryPercent) chargeSessionObserved = true;
 
-        if (battery >= 100 && chargeRiseObserved && !fullChargeAlertSent) {
+        if (battery >= 100 && chargeSessionObserved && !fullChargeAlertSent) {
             fullChargeAlertSent = true;
             showFullChargeNotification(snapshot.modelName);
         }
@@ -336,6 +349,18 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setPriority(Notification.PRIORITY_MAX);
         manager.notify(CHARGE_NOTIFICATION_ID, builder.build());
+        playChargeBeep();
+    }
+
+    /** Short, low-key double beep on the notification audio stream; no bundled audio asset. */
+    private void playChargeBeep() {
+        try {
+            ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55);
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 350);
+            main.postDelayed(() -> {
+                try { tone.release(); } catch (RuntimeException ignored) {}
+            }, 600L);
+        } catch (RuntimeException ignored) {}
     }
 
     private PendingIntent servicePendingIntent(String action, int requestCode) {
@@ -351,26 +376,24 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         NotificationChannel live = new NotificationChannel(
                 LIVE_CHANNEL_ID, "Scooter live status", NotificationManager.IMPORTANCE_HIGH);
-        live.setDescription("Live battery, ride and connection status with quick lock control");
+        live.setDescription("Live battery, charging, BLE signal and ride status with quick lock control");
         live.setShowBadge(false);
         live.setSound(null, null);
         live.enableVibration(false);
         live.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         manager.createNotificationChannel(live);
 
+        // v2 intentionally stays silent: the app emits its own short, consistent double-beep.
         NotificationChannel charge = new NotificationChannel(
                 CHARGE_CHANNEL_ID, "Full charge alerts", NotificationManager.IMPORTANCE_HIGH);
-        charge.setDescription("Sound alert when the scooter battery reaches 100%");
-        Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-        AudioAttributes attrs = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
-                .build();
-        charge.setSound(sound, attrs);
-        charge.enableVibration(true);
+        charge.setDescription("Alert when the scooter battery reaches 100% while charging");
+        charge.setSound(null, null);
+        charge.enableVibration(false);
         charge.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         manager.createNotificationChannel(charge);
 
         manager.deleteNotificationChannel("scooter_connection");
+        manager.deleteNotificationChannel("scooter_charge_alerts");
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
