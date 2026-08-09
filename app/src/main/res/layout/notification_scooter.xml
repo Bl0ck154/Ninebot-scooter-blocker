@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:paddingEnd="6dp">
+        android:paddingEnd="4dp">
 
         <TextView
             android:id="@+id/notification_title"
@@ -35,14 +35,25 @@
     </LinearLayout>
 
     <TextView
+        android:id="@+id/notification_signal"
+        android:layout_width="42dp"
+        android:layout_height="36dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:text="—"
+        android:textColor="#FF5F6368"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+    <TextView
         android:id="@+id/notification_lock_action"
-        android:layout_width="88dp"
+        android:layout_width="82dp"
         android:layout_height="36dp"
         android:background="@drawable/notification_action_bg"
         android:gravity="center"
         android:maxLines="1"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
         android:textColor="#FF007E79"
         android:textSize="11sp"
         android:textStyle="bold" />
