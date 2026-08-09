@@ -17,7 +17,7 @@ public final class ChargingDetectorTest {
     @Test public void movingPositiveCurrentDoesNotLookLikeCharging() {
         ChargingDetector detector = new ChargingDetector();
         long t = 20_000L;
-        assertNull(detector.update(2.0, 12.0, t));
+        assertEquals(Boolean.FALSE, detector.update(2.0, 12.0, t));
         assertEquals(Boolean.FALSE, detector.update(2.0, 12.0, t + 4_500L));
     }
 
