@@ -1,6 +1,6 @@
 package com.bl0ck154.ninebotblocker;
 
-/** Central live telemetry snapshot. Null means the scooter has not returned that value yet. */
+/** Central live telemetry snapshot. Null means the scooter has not returned/derived that value yet. */
 public final class ScooterTelemetry {
     private Integer batteryPercent;
     private Double batteryVoltage;
@@ -10,6 +10,8 @@ public final class ScooterTelemetry {
     private Double remainingRange;
     private Double controllerTemperature;
     private Double batteryTemperature;
+    private Integer rssi;
+    private Boolean charging;
     private Boolean locked;
     private boolean connected;
 
@@ -24,6 +26,8 @@ public final class ScooterTelemetry {
         remainingRange = other.remainingRange;
         controllerTemperature = other.controllerTemperature;
         batteryTemperature = other.batteryTemperature;
+        rssi = other.rssi;
+        charging = other.charging;
         locked = other.locked;
         connected = other.connected;
     }
@@ -42,6 +46,9 @@ public final class ScooterTelemetry {
     public Double getRemainingRange() { return remainingRange; }
     public Double getControllerTemperature() { return controllerTemperature; }
     public Double getBatteryTemperature() { return batteryTemperature; }
+    public Integer getRssi() { return rssi; }
+    public Boolean getCharging() { return charging; }
+    public boolean isCharging() { return Boolean.TRUE.equals(charging); }
     public Boolean getLocked() { return locked; }
     public boolean isConnected() { return connected; }
 
@@ -53,6 +60,8 @@ public final class ScooterTelemetry {
     void setRemainingRange(Double value) { remainingRange = value; }
     void setControllerTemperature(Double value) { controllerTemperature = value; }
     void setBatteryTemperature(Double value) { batteryTemperature = value; }
+    void setRssi(Integer value) { rssi = value; }
+    void setCharging(Boolean value) { charging = value; }
     void setLocked(Boolean value) { locked = value; }
     void setConnected(boolean value) { connected = value; }
 }
