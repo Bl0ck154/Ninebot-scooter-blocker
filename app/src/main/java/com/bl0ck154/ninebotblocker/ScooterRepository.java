@@ -382,8 +382,11 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     @Override public void onPacket(byte[] packet) {
         if (identityVerified && G30Protocol.applyTelemetryPacket(packet, telemetry)) {
+            int index = ShuNinebotProtocol.index(packet);
+            boolean freshCurrent = index == G30Protocol.REG_BMS_CURRENT;
             telemetry.setCharging(chargingDetector.update(
-                    telemetry.getBatteryCurrent(), telemetry.getSpeed(), System.currentTimeMillis()));
+                    telemetry.getBatteryCurrent(), telemetry.getSpeed(),
+                    System.currentTimeMillis(), freshCurrent));
             rideStats.onTelemetry(scooterKey(), telemetry);
             notifyListeners();
         }
