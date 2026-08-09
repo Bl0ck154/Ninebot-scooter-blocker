@@ -53,8 +53,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
 
     private ScooterRepository repository;
-    private TextView titleText, deviceText, stateText, batteryPercentText, batteryText,
-            rideText, tripText, rangeText, totalText, tempText, batteryHelpButton, chargeSoundSettings;
+    private TextView titleText, deviceText, stateText, signalText, batteryPercentText, chargingText,
+            batteryText, rideText, tripText, rangeText, totalText, tempText, batteryHelpButton,
+            chargeSoundSettings;
     private Button lockButton;
     private Switch persistentSwitch, autoConnectSwitch, chargeAlertSwitch;
     private boolean suppressSwitches;
@@ -118,7 +119,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         LinearLayout chips = new LinearLayout(this);
         chips.setOrientation(LinearLayout.HORIZONTAL);
         stateText = chip("Disconnected");
-        chips.addView(stateText, wrapWithRight(0));
+        signalText = chip("Signal —");
+        chips.addView(stateText, wrapWithRight(dp(8)));
+        chips.addView(signalText, wrapWithRight(0));
         root.addView(chips, full(dp(12)));
 
         LinearLayout hero = cardContainer();
@@ -127,6 +130,10 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         batteryPercentText = text("--%", 46, TEXT);
         batteryPercentText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         hero.addView(batteryPercentText);
+        chargingText = text("🔋 Charging", 13, ACCENT);
+        chargingText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        chargingText.setVisibility(View.GONE);
+        hero.addView(chargingText);
         batteryText = text("—", 15, MUTED);
         batteryText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         hero.addView(batteryText);
@@ -205,7 +212,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         });
         root.addView(settingsCard, full(dp(6)));
 
-        chargeSoundSettings = text("Full-charge sound settings  ›", 12, ACCENT);
+        chargeSoundSettings = text("Full-charge alert settings  ›", 12, ACCENT);
         chargeSoundSettings.setGravity(Gravity.CENTER);
         chargeSoundSettings.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         chargeSoundSettings.setPadding(dp(10), dp(7), dp(10), dp(7));
@@ -342,8 +349,18 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         stateText.setText(prettyState(snapshot.connectionState));
         styleConnectionChip(snapshot.connectionState);
+        styleSignalChip(t, snapshot.connectionState == ScooterConnectionState.READY && t.isConnected());
 
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
+        if (t.isCharging()) {
+            boolean alt = ((System.currentTimeMillis() / 900L) & 1L) == 0L;
+            chargingText.setText(alt ? "🔋 Charging" : "⚡ Charging");
+            chargingText.setVisibility(View.VISIBLE);
+            batteryPercentText.setTextColor(ACCENT);
+        } else {
+            chargingText.setVisibility(View.GONE);
+            batteryPercentText.setTextColor(TEXT);
+        }
         batteryText.setText(formatBattery(t));
         rideText.setText(t.getSpeed() == null ? "—" : f("%.1f km/h", t.getSpeed()));
         double sessionKm = snapshot.rideStats == null ? 0.0 : snapshot.rideStats.currentDistanceKm();
@@ -392,6 +409,20 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         }
         stateText.setTextColor(fg);
         stateText.setBackground(rounded(bg, 99));
+    }
+
+    private void styleSignalChip(ScooterTelemetry telemetry, boolean ready) {
+        Integer rssi = ready ? telemetry.getRssi() : null;
+        if (rssi == null) {
+            signalText.setText("Signal —");
+            signalText.setTextColor(MUTED);
+            signalText.setBackground(rounded(Color.rgb(238, 241, 245), 99));
+            return;
+        }
+        boolean weak = BleSignal.weak(rssi);
+        signalText.setText(BleSignal.bars(rssi) + "  " + rssi + " dBm");
+        signalText.setTextColor(weak ? ERROR_TEXT : ACCENT);
+        signalText.setBackground(rounded(weak ? ERROR_SOFT : ACCENT_SOFT, 99));
     }
 
     private String formatBattery(ScooterTelemetry t) {
@@ -507,7 +538,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                 ScooterService.startForConnectedScooter(this);
             }
             Toast.makeText(this,
-                    "Full-charge alert armed. It will sound when battery rises to 100%.",
+                    "Full-charge alert armed. A short double-beep will play when charging reaches 100%.",
                     Toast.LENGTH_LONG).show();
         }
     }
