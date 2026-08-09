@@ -22,6 +22,7 @@ public final class ScooterBleManager {
         void onConnectionState(ScooterConnectionState state, String message);
         void onReady(byte[] serial);
         void onPacket(byte[] packet);
+        void onRssi(int rssi);
         void onActionResult(boolean success, Boolean locked, String message);
         void onDisconnected(String reason);
     }
@@ -110,6 +111,10 @@ public final class ScooterBleManager {
                     if (current()) listener.onPacket(packet);
                 }
 
+                @Override public void onRssi(int rssi) {
+                    if (current()) listener.onRssi(rssi);
+                }
+
                 @Override public void onActionResult(boolean success, Boolean locked, String message) {
                     if (current()) listener.onActionResult(success, locked, message);
                 }
@@ -138,6 +143,11 @@ public final class ScooterBleManager {
     public boolean send(byte[] protocolPacket) {
         NinebotBleClient current = client;
         return current != null && current.sendProtocolPacket(protocolPacket);
+    }
+
+    public void requestRssi() {
+        NinebotBleClient current = client;
+        if (current != null && current.isReady()) current.requestRssi();
     }
 
     public boolean setLocked(boolean locked) {
