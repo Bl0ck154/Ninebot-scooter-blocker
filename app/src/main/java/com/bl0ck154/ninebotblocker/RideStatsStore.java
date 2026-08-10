@@ -19,13 +19,14 @@ import java.util.Locale;
 /** Lightweight local statistics store. All rows are scoped to a remembered scooter key. */
 public final class RideStatsStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "scooter_stats.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     public static final class RideRecord {
         public final long id;
         public final String scooterKey;
         public final long startedAt;
         public final Long endedAt;
+        /** Last actual movement time. In schema v1 this used to mean last telemetry time. */
         public final long lastSeenAt;
         public final double distanceKm;
         public final double dischargedPercent;
@@ -83,6 +84,27 @@ public final class RideStatsStore extends SQLiteOpenHelper {
         }
     }
 
+    public static final class DailyStat {
+        public final String day;
+        public final double distanceKm;
+        public final int rides;
+        public final long connectedMs;
+        public final double dischargedPercent;
+        public final double chargedPercent;
+        public final double maxSpeedKmh;
+
+        DailyStat(String day, double distanceKm, int rides, long connectedMs,
+                  double dischargedPercent, double chargedPercent, double maxSpeedKmh) {
+            this.day = day;
+            this.distanceKm = distanceKm;
+            this.rides = rides;
+            this.connectedMs = connectedMs;
+            this.dischargedPercent = dischargedPercent;
+            this.chargedPercent = chargedPercent;
+            this.maxSpeedKmh = maxSpeedKmh;
+        }
+    }
+
     private static volatile RideStatsStore instance;
 
     public static RideStatsStore get(Context context) {
@@ -129,7 +151,12 @@ public final class RideStatsStore extends SQLiteOpenHelper {
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // Version 1 is the first public statistics schema.
+        if (oldVersion < 2) {
+            // v1 refreshed last_seen_at on every telemetry write, so an open legacy row cannot
+            // safely tell us when movement actually stopped. End it once during migration rather
+            // than accidentally joining a new work shift onto yesterday's/earlier ride.
+            db.execSQL("UPDATE rides SET ended_at=last_seen_at WHERE ended_at IS NULL");
+        }
     }
 
     public synchronized RideRecord openRide(String scooterKey) {
@@ -174,7 +201,7 @@ public final class RideStatsStore extends SQLiteOpenHelper {
     }
 
     public synchronized void applySample(long rideId, String scooterKey, long now,
-                                         Integer battery, Double odometer,
+                                         Long movementAt, Integer battery, Double odometer,
                                          double distanceDeltaKm, double dischargedDelta,
                                          double chargedDelta, double speedKmh,
                                          long connectedDeltaMs) {
@@ -188,10 +215,10 @@ public final class RideStatsStore extends SQLiteOpenHelper {
             double safeCharged = Math.max(0.0, chargedDelta);
             long safeConnected = Math.max(0L, connectedDeltaMs);
             double maxSpeed = Math.max(before.maxSpeedKmh, Math.max(0.0, speedKmh));
-            boolean countNow = !before.counted && safeDistance >= 0.005;
+            boolean countNow = !before.counted && before.distanceKm + safeDistance >= 0.005;
 
             ContentValues v = new ContentValues();
-            v.put("last_seen_at", now);
+            if (movementAt != null && movementAt > before.lastSeenAt) v.put("last_seen_at", movementAt);
             if (battery != null) v.put("last_battery", battery);
             if (odometer != null) v.put("last_odometer", odometer);
             v.put("distance_km", before.distanceKm + safeDistance);
@@ -249,10 +276,42 @@ public final class RideStatsStore extends SQLiteOpenHelper {
         }
     }
 
+    public synchronized List<DailyStat> dailyRange(String scooterKey, String firstDay, String lastDay) {
+        ArrayList<DailyStat> out = new ArrayList<>();
+        if (scooterKey == null) return out;
+        try (Cursor c = getReadableDatabase().query("daily_stats", null,
+                "scooter_key=? AND day>=? AND day<=?",
+                new String[]{scooterKey, firstDay, lastDay}, null, null, "day ASC")) {
+            while (c.moveToNext()) {
+                out.add(new DailyStat(
+                        c.getString(c.getColumnIndexOrThrow("day")),
+                        c.getDouble(c.getColumnIndexOrThrow("distance_km")),
+                        c.getInt(c.getColumnIndexOrThrow("rides")),
+                        c.getLong(c.getColumnIndexOrThrow("connected_ms")),
+                        c.getDouble(c.getColumnIndexOrThrow("discharged_pct")),
+                        c.getDouble(c.getColumnIndexOrThrow("charged_pct")),
+                        c.getDouble(c.getColumnIndexOrThrow("max_speed"))));
+            }
+        }
+        return out;
+    }
+
     public synchronized List<RideRecord> recentRides(String scooterKey, int limit) {
         ArrayList<RideRecord> out = new ArrayList<>();
         try (Cursor c = getReadableDatabase().query("rides", null,
                 "scooter_key=? AND (counted=1 OR distance_km>0)", new String[]{scooterKey},
+                null, null, "started_at DESC", String.valueOf(Math.max(1, limit)))) {
+            while (c.moveToNext()) out.add(ride(c));
+        }
+        return out;
+    }
+
+    public synchronized List<RideRecord> ridesBetween(String scooterKey, long fromMs, long toMs, int limit) {
+        ArrayList<RideRecord> out = new ArrayList<>();
+        if (scooterKey == null) return out;
+        try (Cursor c = getReadableDatabase().query("rides", null,
+                "scooter_key=? AND started_at>=? AND started_at<? AND (counted=1 OR distance_km>0)",
+                new String[]{scooterKey, String.valueOf(fromMs), String.valueOf(toMs)},
                 null, null, "started_at DESC", String.valueOf(Math.max(1, limit)))) {
             while (c.moveToNext()) out.add(ride(c));
         }
