@@ -96,15 +96,26 @@ public final class ScooterBleManager {
 
                 @Override public void onTransportConnected() {
                     if (!current()) return;
+                    NinebotBleClient active = client;
+                    // NinebotBleClient delivers this transport callback through the main queue.
+                    // Authentication can finish on a Bluetooth callback thread first. If that
+                    // happened, never let the older transport event downgrade READY to CONNECTED.
+                    if (active != null && active.isReady()) return;
                     listener.onConnectionState(ScooterConnectionState.CONNECTED, "Bluetooth connected");
                 }
 
                 @Override public void onReady() {
                     if (!current()) return;
-                    NinebotBleClient active = client;
-                    if (active == null) return;
-                    listener.onConnectionState(ScooterConnectionState.READY, "Connected");
-                    listener.onReady(active.getSerial());
+                    // Serialize READY onto the same main queue as onTransportConnected/status.
+                    // This keeps public repository/UI state ordered even when Android dispatches
+                    // GATT callbacks on a binder thread while the main thread is briefly busy.
+                    main.post(() -> {
+                        if (generation != connectionGeneration) return;
+                        NinebotBleClient active = client;
+                        if (active == null || !active.isReady()) return;
+                        listener.onConnectionState(ScooterConnectionState.READY, "Connected");
+                        listener.onReady(active.getSerial());
+                    });
                 }
 
                 @Override public void onPacket(byte[] packet) {
@@ -116,7 +127,11 @@ public final class ScooterBleManager {
                 }
 
                 @Override public void onActionResult(boolean success, Boolean locked, String message) {
-                    if (current()) listener.onActionResult(success, locked, message);
+                    main.post(() -> {
+                        if (generation == connectionGeneration) {
+                            listener.onActionResult(success, locked, message);
+                        }
+                    });
                 }
 
                 @Override public void onDisconnected(String reason) {
