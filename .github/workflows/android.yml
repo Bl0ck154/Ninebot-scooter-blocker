@@ -85,14 +85,20 @@ jobs:
 
       - name: Report APK size
         run: |
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            RELEASE_APK=app/build/outputs/apk/release/app-release.apk
+          else
+            RELEASE_APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          fi
+          test -f "$RELEASE_APK"
           DEBUG_BYTES="$(stat -c%s app/build/outputs/apk/debug/app-debug.apk)"
-          RELEASE_BYTES="$(stat -c%s app/build/outputs/apk/release/app-release.apk)"
+          RELEASE_BYTES="$(stat -c%s "$RELEASE_APK")"
           echo "Debug APK:   $DEBUG_BYTES bytes"
           echo "Release APK: $RELEASE_BYTES bytes"
-          python3 - <<'PY'
+          RELEASE_APK="$RELEASE_APK" python3 - <<'PY'
           import os
           d = os.path.getsize('app/build/outputs/apk/debug/app-debug.apk')
-          r = os.path.getsize('app/build/outputs/apk/release/app-release.apk')
+          r = os.path.getsize(os.environ['RELEASE_APK'])
           saved = d-r
           pct = saved*100/d if d else 0
           print(f'R8/resource shrinking saved {saved} bytes ({pct:.1f}%).')
