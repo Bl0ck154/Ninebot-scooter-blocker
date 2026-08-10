@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='BLE signal + charging release. Adds live RSSI signal bars to the dashboard and persistent notification, conservative G30 charging detection from sustained stationary BMS charge current, an animated charging indicator, and a short low-key double-beep when a monitored charge reaches 100%. RSSI reads are serialized with the existing GATT write queue. No unverified scooter-side buzzer/no-op command was added, and the known-good SHU authentication plus lock/unlock packet path remains unchanged.'
+          NOTES='Connection-state synchronization hotfix. Fixes a race where the G30 could already be authenticated and accepting LOCK/UNLOCK commands while an older queued Bluetooth transport callback downgraded the public state back to CONNECTED/RECONNECTING. READY is now serialized on the main queue and stale transport callbacks cannot overwrite it. The foreground notification also refreshes immediately when a reconnect completes instead of waiting for the telemetry throttle window. BLE auth, lock/unlock packets, RSSI and charging logic are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
