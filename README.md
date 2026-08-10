@@ -309,6 +309,8 @@ gradle :app:assembleRelease
 
 Every push to `main` runs release lint, unit tests, debug + optimized release builds, signature verification, size reporting, artifact upload and GitHub Release publication.
 
+The signing keystore is intentionally not stored in this repository. Official APKs are signed in GitHub Actions using an encrypted repository secret. Local builds use the standard Android debug signing behavior unless a private keystore is configured.
+
 ---
 
 ## Protocol references
@@ -320,6 +322,16 @@ Every push to `main` runs release lint, unit tests, debug + optimized release bu
 - [Segway / Ninebot BLE documentation](https://nootnooot.codeberg.page/segway-ninebot-ble/)
 
 The project's own working G30 implementation remains the primary compatibility source.
+
+---
+
+## Contributing and security
+
+Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. Please report security-sensitive issues privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under the [MIT License](LICENSE).
 
 ---
 

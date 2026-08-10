@@ -25,9 +25,12 @@ jobs:
           echo "APK_NAME=Ninebot-scooter-blocker-v$VERSION_NAME.apk" >> "$GITHUB_ENV"
 
       - name: Decode stable signing key
+        env:
+          STABLE_SIGNING_KEYSTORE_BASE64: ${{ secrets.STABLE_SIGNING_KEYSTORE_BASE64 }}
         run: |
+          test -n "$STABLE_SIGNING_KEYSTORE_BASE64"
           mkdir -p ci
-          base64 -d ci/stable-debug-keystore.b64 > ci/ninebot-debug.keystore
+          printf '%s' "$STABLE_SIGNING_KEYSTORE_BASE64" | base64 -d > ci/ninebot-debug.keystore
 
       - name: Prepare optional production signing
         env:

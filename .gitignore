@@ -6,3 +6,5 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+ci/*.keystore
+ci/*keystore*.b64
