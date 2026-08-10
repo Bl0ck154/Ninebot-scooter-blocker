@@ -307,7 +307,7 @@ gradle :app:assembleDebug
 gradle :app:assembleRelease
 ```
 
-Every push to `main` runs release lint, unit tests, debug + optimized release builds, signature verification, size reporting, artifact upload and GitHub Release publication.
+Pull requests run release lint, unit tests, and debug + optimized release builds without access to signing secrets. Every push to `main` additionally verifies the official signature, uploads the signed APK artifact, and publishes the GitHub Release.
 
 The signing keystore is intentionally not stored in this repository. Official APKs are signed in GitHub Actions using an encrypted repository secret. Local builds use the standard Android debug signing behavior unless a private keystore is configured.
 

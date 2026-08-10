@@ -3,7 +3,13 @@ name: Android APK
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -25,6 +31,7 @@ jobs:
           echo "APK_NAME=Ninebot-scooter-blocker-v$VERSION_NAME.apk" >> "$GITHUB_ENV"
 
       - name: Decode stable signing key
+        if: github.event_name != 'pull_request'
         env:
           STABLE_SIGNING_KEYSTORE_BASE64: ${{ secrets.STABLE_SIGNING_KEYSTORE_BASE64 }}
         run: |
@@ -33,6 +40,7 @@ jobs:
           printf '%s' "$STABLE_SIGNING_KEYSTORE_BASE64" | base64 -d > ci/ninebot-debug.keystore
 
       - name: Prepare optional production signing
+        if: github.event_name != 'pull_request'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
@@ -71,6 +79,7 @@ jobs:
         run: gradle --no-daemon :app:lintRelease :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease
 
       - name: Verify optimized release signature
+        if: github.event_name != 'pull_request'
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
 
@@ -90,9 +99,11 @@ jobs:
           PY
 
       - name: Select publishable APK
+        if: github.event_name != 'pull_request'
         run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
       - name: Upload workflow artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: Ninebot-scooter-blocker-v${{ env.VERSION_NAME }}-apk
@@ -100,6 +111,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release APK
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
