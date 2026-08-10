@@ -104,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Statistics overhaul. Rides now split from the last real movement instead of BLE uptime, so a scooter that stays connected while parked cannot keep one session alive for hours. Sessions start only when movement is detected and short pauses still stay inside the configured 20/30/60-minute window. The Statistics screen is rebuilt around a tappable 17-week GitHub-style distance heatmap, native vertical scrolling, Day/Week/Month segmented controls, date navigation, period-specific ride lists, and a clearer inactivity timeout setting. Legacy open v1 ride rows are safely closed once during database migration so old telemetry-based timestamps cannot merge into a new ride.'
+          NOTES='Calendar and dashboard polish. Fixes the activity heatmap jumping backwards whenever an older square is selected by separating the selected day from the 17-week calendar viewport. The calendar now has explicit back/forward history controls, a visible date-range label with years, and day/week titles that always include the year. Heatmap taps are also protected against accidental selection while vertically scrolling. The main dashboard now uses a dedicated ripple/elevated Statistics card with a calendar/history subtitle instead of the old plain button. Ride splitting, BLE, lock/unlock, charging and notification behavior are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
