@@ -177,6 +177,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         boolean ready = snapshot.connectionState == ScooterConnectionState.READY
                 && snapshot.telemetry.isConnected();
+        boolean recovered = ready && disconnectedSince != 0L;
         if (ready) {
             hadReadyConnection = true;
             disconnectedSince = 0L;
@@ -190,7 +191,9 @@ public final class ScooterService extends Service implements ScooterRepository.L
             return;
         }
 
-        if (foregroundStarted && ready) queueNotification(snapshot, false);
+        // Telemetry churn is throttled, but a reconnect transition is user-visible state and
+        // should replace the stale red RECONNECT label immediately.
+        if (foregroundStarted && ready) queueNotification(snapshot, recovered);
 
         if (transientAction && transientTarget != null
                 && transientTarget.equals(snapshot.telemetry.getLocked())) {
