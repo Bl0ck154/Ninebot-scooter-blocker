@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -34,6 +35,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private static final int REQ_EXPORT = 91;
     private static final int REQ_IMPORT = 92;
     private static final long SUMMARY_REFRESH_MS = 5000L;
+    private static final int HEATMAP_SHIFT_WEEKS = 4;
 
     private static final int BG = Color.rgb(245, 247, 250);
     private static final int CARD = Color.WHITE;
@@ -47,6 +49,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private RideStatsStore store;
     private int selectedPeriod = RideStatsTracker.PERIOD_DAY;
     private long selectedAnchorMs;
+    private long calendarAnchorMs;
     private long lastSummaryRefreshAt;
 
     private TextView modelText;
@@ -61,6 +64,9 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private TextView previousPeriod;
     private TextView nextPeriod;
     private TextView periodTitle;
+    private TextView calendarPrevious;
+    private TextView calendarNext;
+    private TextView calendarRange;
     private TextView summaryDistance;
     private TextView summaryRides;
     private TextView summaryTime;
@@ -80,6 +86,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         repository = ScooterRepository.get(this);
         store = RideStatsStore.get(this);
         selectedAnchorMs = startOfDay(System.currentTimeMillis());
+        calendarAnchorMs = selectedAnchorMs;
         buildUi();
     }
 
@@ -108,7 +115,8 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         root.setPadding(side, top, side, bottom);
         if (Build.VERSION.SDK_INT >= 35) {
             root.setOnApplyWindowInsetsListener((v, insets) -> {
-                Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
+                        | WindowInsets.Type.displayCutout());
                 v.setPadding(side, top + bars.top, side, bottom + bars.bottom);
                 return insets;
             });
@@ -143,7 +151,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
 
         TextView note = text(
                 "Statistics stay on this phone and are separated by scooter serial/MAC. " +
-                        "A ride now ends after the selected amount of time without actual movement, " +
+                        "A ride ends after the selected amount of time without actual movement, " +
                         "even if Bluetooth remains connected.", 11, MUTED);
         note.setLineSpacing(dp(2), 1f);
         root.addView(note, full(0));
@@ -198,24 +206,40 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         LinearLayout c = card();
         c.setPadding(dp(14), dp(12), dp(14), dp(12));
         c.addView(label("RIDING ACTIVITY"));
-        TextView hint = text("Tap a square to inspect that day", 12, MUTED);
+        TextView hint = text("Tap a square to inspect a day · use arrows to browse history", 12, MUTED);
         c.addView(hint, fullTop(dp(3)));
+
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setGravity(Gravity.CENTER_VERTICAL);
+        calendarPrevious = smallNavArrow("‹");
+        calendarPrevious.setOnClickListener(v -> shiftHeatmap(-1));
+        calendarRange = text("", 12, TEXT);
+        calendarRange.setGravity(Gravity.CENTER);
+        calendarRange.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        calendarNext = smallNavArrow("›");
+        calendarNext.setOnClickListener(v -> shiftHeatmap(1));
+        nav.addView(calendarPrevious, new LinearLayout.LayoutParams(dp(38), dp(36)));
+        nav.addView(calendarRange, new LinearLayout.LayoutParams(0, dp(36), 1f));
+        nav.addView(calendarNext, new LinearLayout.LayoutParams(dp(38), dp(36)));
+        c.addView(nav, fullTop(dp(5)));
 
         heatmap = new RideHeatmapView(this);
         heatmap.setPadding(0, dp(4), 0, 0);
         heatmap.setListener(timestamp -> {
+            // Selection and calendar viewport are intentionally independent. Tapping an older
+            // square must not make the whole 17-week calendar jump backwards.
             selectedAnchorMs = startOfDay(timestamp);
             selectedPeriod = RideStatsTracker.PERIOD_DAY;
             lastSummaryRefreshAt = 0L;
             refreshSummary();
         });
-        c.addView(heatmap, fullTop(dp(6)));
+        c.addView(heatmap, fullTop(dp(3)));
 
         LinearLayout legend = new LinearLayout(this);
         legend.setOrientation(LinearLayout.HORIZONTAL);
         legend.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        TextView less = text("Less", 10, MUTED);
-        legend.addView(less);
+        legend.addView(text("Less", 10, MUTED));
         int[] colors = {0xFFE8EDF2, 0xFFD5EEE9, 0xFF9DD9D1, 0xFF4FB7AA, 0xFF007E79};
         for (int color : colors) {
             View square = new View(this);
@@ -253,7 +277,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         previousPeriod.setOnClickListener(v -> shiftPeriod(-1));
         nextPeriod = navArrow("›");
         nextPeriod.setOnClickListener(v -> shiftPeriod(1));
-        periodTitle = text("Today", 15, TEXT);
+        periodTitle = text("", 15, TEXT);
         periodTitle.setGravity(Gravity.CENTER);
         periodTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         nav.addView(previousPeriod, new LinearLayout.LayoutParams(dp(44), dp(42)));
@@ -294,7 +318,8 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         pauseValue.setOnClickListener(v -> choosePauseTimeout());
         c.addView(pauseValue);
         TextView explanation = text(
-                "Short shop/order stops stay in the same ride. When the scooter has not actually moved for this long, the next movement starts a new ride — even if BLE never disconnected.",
+                "Short shop/order stops stay in the same ride. When the scooter has not actually " +
+                        "moved for this long, the next movement starts a new ride — even if BLE never disconnected.",
                 11, MUTED);
         explanation.setLineSpacing(dp(2), 1f);
         c.addView(explanation);
@@ -343,7 +368,8 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
                     + "  ·  max " + f("%.1f km/h", ride.maxSpeedKmh));
             endRideAction.setVisibility(View.VISIBLE);
         }
-        continueAction.setVisibility(stats != null && stats.canContinuePrevious ? View.VISIBLE : View.GONE);
+        continueAction.setVisibility(stats != null && stats.canContinuePrevious
+                ? View.VISIBLE : View.GONE);
         pauseValue.setText((stats == null ? 20 : stats.pauseMinutes) + " min without movement  ›");
 
         long now = System.currentTimeMillis();
@@ -358,7 +384,8 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         DateRange range = rangeFor(selectedPeriod, selectedAnchorMs);
         RideStatsStore.PeriodSummary period = key == null
                 ? new RideStatsStore.PeriodSummary(0, 0, 0, 0, 0, 0)
-                : store.period(key, RideStatsStore.dayKey(range.startMs), RideStatsStore.dayKey(range.endInclusiveMs));
+                : store.period(key, RideStatsStore.dayKey(range.startMs),
+                RideStatsStore.dayKey(range.endInclusiveMs));
 
         summaryDistance.setText(f("%.2f km", period.distanceKm));
         summaryRides.setText(String.valueOf(period.rides));
@@ -372,22 +399,39 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         updateNextArrow();
 
         List<RideStatsStore.RideRecord> rides = key == null
-                ? java.util.Collections.emptyList()
+                ? Collections.emptyList()
                 : store.ridesBetween(key, range.startMs, range.endExclusiveMs, 20);
         renderRides(rides);
         refreshHeatmap(key);
     }
 
     private void refreshHeatmap(String key) {
-        long start = heatmapStart(selectedAnchorMs);
+        long start = heatmapStart(calendarAnchorMs);
         Calendar end = Calendar.getInstance();
         end.setTimeInMillis(start);
         end.add(Calendar.DAY_OF_MONTH, RideHeatmapView.WEEKS * 7 - 1);
+        long endMs = end.getTimeInMillis();
         List<RideStatsStore.DailyStat> days = key == null
-                ? java.util.Collections.emptyList()
-                : store.dailyRange(key, RideStatsStore.dayKey(start), RideStatsStore.dayKey(end.getTimeInMillis()));
-        heatmap.setData(selectedAnchorMs, System.currentTimeMillis(),
+                ? Collections.emptyList()
+                : store.dailyRange(key, RideStatsStore.dayKey(start), RideStatsStore.dayKey(endMs));
+        heatmap.setData(calendarAnchorMs, System.currentTimeMillis(),
                 RideStatsStore.dayKey(selectedAnchorMs), days);
+        calendarRange.setText(formatHeatmapRange(start, endMs));
+        boolean canGoNext = endMs < endOfCurrentWeek(System.currentTimeMillis());
+        calendarNext.setEnabled(canGoNext);
+        calendarNext.setAlpha(canGoNext ? 1f : 0.28f);
+    }
+
+    private void shiftHeatmap(int direction) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis(calendarAnchorMs);
+        c.add(Calendar.WEEK_OF_YEAR, direction * HEATMAP_SHIFT_WEEKS);
+        long candidate = startOfDay(c.getTimeInMillis());
+        long today = startOfDay(System.currentTimeMillis());
+        if (candidate > today) candidate = today;
+        if (candidate == calendarAnchorMs) return;
+        calendarAnchorMs = candidate;
+        refreshHeatmap(repository.scooterKey());
     }
 
     private void renderRides(List<RideStatsStore.RideRecord> rides) {
@@ -444,9 +488,13 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private void shiftPeriod(int direction) {
         Calendar c = Calendar.getInstance();
         c.setTimeInMillis(selectedAnchorMs);
-        if (selectedPeriod == RideStatsTracker.PERIOD_DAY) c.add(Calendar.DAY_OF_MONTH, direction);
-        else if (selectedPeriod == RideStatsTracker.PERIOD_WEEK) c.add(Calendar.WEEK_OF_YEAR, direction);
-        else c.add(Calendar.MONTH, direction);
+        if (selectedPeriod == RideStatsTracker.PERIOD_DAY) {
+            c.add(Calendar.DAY_OF_MONTH, direction);
+        } else if (selectedPeriod == RideStatsTracker.PERIOD_WEEK) {
+            c.add(Calendar.WEEK_OF_YEAR, direction);
+        } else {
+            c.add(Calendar.MONTH, direction);
+        }
         long candidate = startOfDay(c.getTimeInMillis());
         long today = startOfDay(System.currentTimeMillis());
         if (candidate > today) candidate = today;
@@ -517,11 +565,13 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
                 }
                 new AlertDialog.Builder(this)
                         .setTitle("Import statistics?")
-                        .setMessage("This backup will replace local ride statistics on this phone. Scooter connection settings are not changed.")
+                        .setMessage("This backup will replace local ride statistics on this phone. " +
+                                "Scooter connection settings are not changed.")
                         .setPositiveButton("Import", (d, w) -> {
                             try {
                                 repository.importStatisticsReplace(json.toString());
                                 selectedAnchorMs = startOfDay(System.currentTimeMillis());
+                                calendarAnchorMs = selectedAnchorMs;
                                 selectedPeriod = RideStatsTracker.PERIOD_DAY;
                                 lastSummaryRefreshAt = 0L;
                                 render(repository.snapshot(), true);
@@ -585,6 +635,14 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         TextView out = text(value, 28, ACCENT);
         out.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         out.setGravity(Gravity.CENTER);
+        return out;
+    }
+
+    private TextView smallNavArrow(String value) {
+        TextView out = text(value, 24, ACCENT);
+        out.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        out.setGravity(Gravity.CENTER);
+        out.setBackground(rounded(ACCENT_SOFT, 10));
         return out;
     }
 
@@ -682,10 +740,7 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
     private static long startOfDay(long timestamp) {
         Calendar c = Calendar.getInstance();
         c.setTimeInMillis(timestamp);
-        c.set(Calendar.HOUR_OF_DAY, 0);
-        c.set(Calendar.MINUTE, 0);
-        c.set(Calendar.SECOND, 0);
-        c.set(Calendar.MILLISECOND, 0);
+        zeroTime(c);
         return c.getTimeInMillis();
     }
 
@@ -695,6 +750,14 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
         int offset = (c.get(Calendar.DAY_OF_WEEK) + 5) % 7;
         c.add(Calendar.DAY_OF_MONTH, -offset);
         c.add(Calendar.WEEK_OF_YEAR, -(RideHeatmapView.WEEKS - 1));
+        return c.getTimeInMillis();
+    }
+
+    private static long endOfCurrentWeek(long timestamp) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis(startOfDay(timestamp));
+        int offset = (c.get(Calendar.DAY_OF_WEEK) + 5) % 7;
+        c.add(Calendar.DAY_OF_MONTH, -offset + 6);
         return c.getTimeInMillis();
     }
 
@@ -724,13 +787,44 @@ public final class StatsActivity extends Activity implements ScooterRepository.L
 
     private static String formatRangeTitle(DateRange range) {
         if (range.period == RideStatsTracker.PERIOD_DAY) {
-            return new SimpleDateFormat("EEE, d MMM", Locale.US).format(new Date(range.startMs));
+            return new SimpleDateFormat("d MMM yyyy", Locale.US).format(new Date(range.startMs));
         }
         if (range.period == RideStatsTracker.PERIOD_MONTH) {
             return new SimpleDateFormat("MMMM yyyy", Locale.US).format(new Date(range.startMs));
         }
-        SimpleDateFormat day = new SimpleDateFormat("d MMM", Locale.US);
-        return day.format(new Date(range.startMs)) + " – " + day.format(new Date(range.endInclusiveMs));
+        Calendar a = Calendar.getInstance();
+        Calendar b = Calendar.getInstance();
+        a.setTimeInMillis(range.startMs);
+        b.setTimeInMillis(range.endInclusiveMs);
+        if (a.get(Calendar.YEAR) == b.get(Calendar.YEAR)) {
+            SimpleDateFormat day = new SimpleDateFormat("d MMM", Locale.US);
+            return day.format(new Date(range.startMs)) + " – "
+                    + day.format(new Date(range.endInclusiveMs)) + " " + a.get(Calendar.YEAR);
+        }
+        SimpleDateFormat full = new SimpleDateFormat("d MMM yyyy", Locale.US);
+        return full.format(new Date(range.startMs)) + " – "
+                + full.format(new Date(range.endInclusiveMs));
+    }
+
+    private static String formatHeatmapRange(long startMs, long endMs) {
+        Calendar a = Calendar.getInstance();
+        Calendar b = Calendar.getInstance();
+        a.setTimeInMillis(startMs);
+        b.setTimeInMillis(endMs);
+        if (a.get(Calendar.YEAR) == b.get(Calendar.YEAR)) {
+            SimpleDateFormat day = new SimpleDateFormat("d MMM", Locale.US);
+            return day.format(new Date(startMs)) + " – " + day.format(new Date(endMs))
+                    + " " + a.get(Calendar.YEAR);
+        }
+        SimpleDateFormat full = new SimpleDateFormat("d MMM yyyy", Locale.US);
+        return full.format(new Date(startMs)) + " – " + full.format(new Date(endMs));
+    }
+
+    private static void zeroTime(Calendar c) {
+        c.set(Calendar.HOUR_OF_DAY, 0);
+        c.set(Calendar.MINUTE, 0);
+        c.set(Calendar.SECOND, 0);
+        c.set(Calendar.MILLISECOND, 0);
     }
 
     private static final class DateRange {

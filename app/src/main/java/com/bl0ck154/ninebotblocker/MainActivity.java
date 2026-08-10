@@ -8,11 +8,13 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
@@ -173,11 +175,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         });
         root.addView(lockButton, full(dp(8)));
 
-        Button statsButton = secondaryButton("Statistics  ›");
-        statsButton.setTextColor(ACCENT);
-        statsButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        statsButton.setOnClickListener(v -> openStatistics());
-        root.addView(statsButton, full(dp(10)));
+        root.addView(statisticsEntry(), full(dp(10)));
 
         LinearLayout settingsCard = cardContainer();
         settingsCard.setPadding(dp(14), dp(2), dp(8), dp(2));
@@ -263,6 +261,48 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         startActivity(new Intent(this, StatsActivity.class));
     }
 
+    private View statisticsEntry() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(11), dp(12), dp(11));
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setElevation(dp(2));
+
+        GradientDrawable surface = stroked(ACCENT_SOFT, Color.rgb(184, 224, 218), 16);
+        GradientDrawable mask = rounded(Color.WHITE, 16);
+        card.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(Color.argb(38, 0, 126, 121)), surface, mask));
+        card.setOnClickListener(v -> openStatistics());
+
+        TextView icon = text("▦", 21, Color.WHITE);
+        icon.setGravity(Gravity.CENTER);
+        icon.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        icon.setBackground(rounded(ACCENT, 12));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        copyParams.setMargins(dp(12), 0, dp(8), 0);
+
+        TextView title = text("Statistics", 15, TEXT);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        copy.addView(title);
+        TextView subtitle = text("Rides · activity calendar · history", 11, MUTED);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        copy.addView(subtitle);
+        card.addView(copy, copyParams);
+
+        TextView arrow = text("›", 27, ACCENT);
+        arrow.setGravity(Gravity.CENTER);
+        arrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(arrow, new LinearLayout.LayoutParams(dp(26), dp(44)));
+        return card;
+    }
+
     private TextView[] addMetricPair(LinearLayout root, String leftLabel, String rightLabel) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -313,7 +353,8 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(6), 0, dp(6));
         TextView text = text(title, 15, TEXT);
-        row.addView(text, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(text, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Switch toggle = new Switch(this);
         toggle.setMinHeight(0);
         toggle.setMinimumHeight(0);
@@ -435,10 +476,15 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     private String formatTemperature(ScooterTelemetry t) {
         if (t.getControllerTemperature() != null && t.getBatteryTemperature() != null) {
-            return f("Controller %.0f°C  ·  Battery %.0f°C", t.getControllerTemperature(), t.getBatteryTemperature());
+            return f("Controller %.0f°C  ·  Battery %.0f°C",
+                    t.getControllerTemperature(), t.getBatteryTemperature());
         }
-        if (t.getControllerTemperature() != null) return f("Controller %.0f°C", t.getControllerTemperature());
-        if (t.getBatteryTemperature() != null) return f("Battery %.0f°C", t.getBatteryTemperature());
+        if (t.getControllerTemperature() != null) {
+            return f("Controller %.0f°C", t.getControllerTemperature());
+        }
+        if (t.getBatteryTemperature() != null) {
+            return f("Battery %.0f°C", t.getBatteryTemperature());
+        }
         return "—";
     }
 
@@ -450,7 +496,8 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         LinkedHashMap<String, String> namesByAddress = new LinkedHashMap<>();
         ArrayList<String> labels = new ArrayList<>();
         ArrayList<String> addresses = new ArrayList<>();
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, labels);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_list_item_1, labels);
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Select your Ninebot / Segway")
                 .setAdapter(adapter, (d, which) -> {
@@ -469,20 +516,25 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                     if (namesByAddress.containsKey(address)) return;
                     namesByAddress.put(address, name);
                     addresses.add(address);
-                    labels.add((name == null || name.trim().isEmpty() ? "Ninebot / Segway" : name)
-                            + "\n" + address + "   " + rssi + " dBm");
+                    labels.add((name == null || name.trim().isEmpty()
+                            ? "Ninebot / Segway" : name) + "\n" + address + "   " + rssi + " dBm");
                     adapter.notifyDataSetChanged();
                 });
             }
+
             @Override public void onFinished() {
                 runOnUiThread(() -> {
-                    if (labels.isEmpty()) Toast.makeText(MainActivity.this,
-                            "No compatible Ninebot / Segway found. Keep the scooter switched on.",
-                            Toast.LENGTH_LONG).show();
+                    if (labels.isEmpty()) {
+                        Toast.makeText(MainActivity.this,
+                                "No compatible Ninebot / Segway found. Keep the scooter switched on.",
+                                Toast.LENGTH_LONG).show();
+                    }
                 });
             }
+
             @Override public void onError(String message) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                        message, Toast.LENGTH_LONG).show());
             }
         });
     }
@@ -491,11 +543,13 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         ShortcutManager manager = getSystemService(ShortcutManager.class);
         if (manager == null || !manager.isRequestPinShortcutSupported()) {
-            Toast.makeText(this, "Pinned shortcuts are not supported by this launcher.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Pinned shortcuts are not supported by this launcher.",
+                    Toast.LENGTH_LONG).show();
             return;
         }
         String model = repository.snapshot().modelName;
-        Intent intent = new Intent(this, ToggleShortcutActivity.class).setAction(ToggleShortcutActivity.ACTION_TOGGLE);
+        Intent intent = new Intent(this, ToggleShortcutActivity.class)
+                .setAction(ToggleShortcutActivity.ACTION_TOGGLE);
         ShortcutInfo info = new ShortcutInfo.Builder(this, "ninebot-lock-toggle")
                 .setShortLabel("Scooter lock")
                 .setLongLabel("Toggle " + (model == null ? "scooter" : model) + " lock")
@@ -571,39 +625,50 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                 .setTitle("Background connection")
                 .setMessage("If Android keeps stopping the scooter connection, allow this app to run reliably in the background. The app does not hold a permanent wake lock.")
                 .setPositiveButton("Open settings", (d, w) -> {
-                    try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
-                    catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
+                    try {
+                        startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                    } catch (Exception e) {
+                        startActivity(new Intent(Settings.ACTION_SETTINGS));
+                    }
                 })
                 .setNegativeButton("Later", null).show();
     }
 
     private boolean hasNotificationPermission() {
         return Build.VERSION.SDK_INT < 33
-                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean hasBlePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
-                    && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+            return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
+                    == PackageManager.PERMISSION_GRANTED
+                    && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    == PackageManager.PERMISSION_GRANTED;
         }
-        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private void requestBlePermissionsIfNeeded() {
         if (hasBlePermissions()) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}, REQ_BLE);
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT}, REQ_BLE);
         } else {
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_BLE);
         }
     }
 
-    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    @Override public void onRequestPermissionsResult(int requestCode,
+                                                      String[] permissions,
+                                                      int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_BLE) {
             if (hasBlePermissions()) repository.setUiActive(true);
-            else Toast.makeText(this, "Bluetooth access is required to connect to the scooter.", Toast.LENGTH_LONG).show();
+            else Toast.makeText(this, "Bluetooth access is required to connect to the scooter.",
+                    Toast.LENGTH_LONG).show();
         } else if (requestCode == REQ_NOTIFICATIONS) {
             boolean granted = hasNotificationPermission();
             if (granted) {

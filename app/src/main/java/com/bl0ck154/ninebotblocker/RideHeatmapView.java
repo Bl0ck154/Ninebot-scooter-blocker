@@ -6,6 +6,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -26,6 +27,7 @@ public final class RideHeatmapView extends View {
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Map<String, Double> distanceByDay = new HashMap<>();
     private final SimpleDateFormat monthFormat = new SimpleDateFormat("MMM", Locale.US);
+    private final int touchSlop;
 
     private Listener listener;
     private long anchorMs = System.currentTimeMillis();
@@ -37,11 +39,14 @@ public final class RideHeatmapView extends View {
     private int left;
     private int top;
     private double maxDistance;
+    private float downX;
+    private float downY;
 
     public RideHeatmapView(Context context) {
         super(context);
         setClickable(true);
         setContentDescription("Ride activity calendar");
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         text.setTextSize(dp(9));
         text.setColor(0xFF667085);
         stroke.setStyle(Paint.Style.STROKE);
@@ -96,8 +101,10 @@ public final class RideHeatmapView extends View {
         top = dp(18);
         int usable = Math.max(dp(120), width - left - getPaddingLeft() - getPaddingRight());
         cell = Math.max(dp(8), (usable - gap * (WEEKS - 1)) / WEEKS);
-        int desiredHeight = getPaddingTop() + top + DAYS * cell + (DAYS - 1) * gap + dp(8) + getPaddingBottom();
-        setMeasuredDimension(resolveSize(width, widthMeasureSpec), resolveSize(desiredHeight, heightMeasureSpec));
+        int desiredHeight = getPaddingTop() + top + DAYS * cell + (DAYS - 1) * gap
+                + dp(8) + getPaddingBottom();
+        setMeasuredDimension(resolveSize(width, widthMeasureSpec),
+                resolveSize(desiredHeight, heightMeasureSpec));
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -124,7 +131,8 @@ public final class RideHeatmapView extends View {
             if ((month != previousMonth || week == 0) && x - lastMonthX >= dp(28)) {
                 text.setTextSize(dp(8.5f));
                 text.setColor(0xFF667085);
-                canvas.drawText(monthFormat.format(weekStart.getTime()), x, getPaddingTop() + dp(10), text);
+                canvas.drawText(monthFormat.format(weekStart.getTime()), x,
+                        getPaddingTop() + dp(10), text);
                 lastMonthX = x;
                 previousMonth = month;
             }
@@ -164,11 +172,29 @@ public final class RideHeatmapView extends View {
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() != MotionEvent.ACTION_UP) return true;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                downX = event.getX();
+                downY = event.getY();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (Math.abs(event.getX() - downX) > touchSlop
+                        || Math.abs(event.getY() - downY) > touchSlop) {
+                    return true;
+                }
+                return selectAt(event.getX(), event.getY());
+            default:
+                return true;
+        }
+    }
+
+    private boolean selectAt(float eventX, float eventY) {
         int originX = getPaddingLeft() + left;
         int originY = getPaddingTop() + top;
-        float relX = event.getX() - originX;
-        float relY = event.getY() - originY;
+        float relX = eventX - originX;
+        float relY = eventY - originY;
         if (relX < 0 || relY < 0) return performClick();
 
         int step = cell + gap;
