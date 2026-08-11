@@ -20,6 +20,7 @@ import java.util.Locale;
 /** Foreground owner for live scooter notification and full-charge monitoring. */
 public final class ScooterService extends Service implements ScooterRepository.Listener {
     public static final String ACTION_START = "com.bl0ck154.ninebotblocker.START";
+    public static final String ACTION_SYNC = "com.bl0ck154.ninebotblocker.SYNC";
     public static final String ACTION_MONITOR = "com.bl0ck154.ninebotblocker.MONITOR";
     public static final String ACTION_STOP_NOTIFICATION = "com.bl0ck154.ninebotblocker.STOP_NOTIFICATION";
     public static final String ACTION_TOGGLE = "com.bl0ck154.ninebotblocker.TOGGLE";
@@ -34,6 +35,10 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private static final int SIGNAL_RED = 0xFFB42318;
     private static final int SIGNAL_MUTED = 0xFF5F6368;
     private static volatile boolean running;
+    // running=true only means Service.onCreate() has happened. Keep a second flag for the
+    // notification's actual published state so a live service with a stale/offline RemoteViews
+    // cannot block a READY resynchronization request.
+    private static volatile boolean foregroundReady;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private ScooterRepository repository;
@@ -56,6 +61,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         if (snapshot == null || !foregroundStarted) return;
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) manager.notify(NOTIFICATION_ID, buildNotification(snapshot));
+        foregroundReady = isReady(snapshot);
         lastNotificationAt = System.currentTimeMillis();
     };
 
@@ -63,8 +69,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         @Override public void run() {
             if (!foregroundStarted || disconnectedSince == 0L || repository == null) return;
             ScooterRepository.Snapshot current = repository.snapshot();
-            boolean ready = current.connectionState == ScooterConnectionState.READY
-                    && current.telemetry.isConnected();
+            boolean ready = isReady(current);
             if (ready) {
                 disconnectedSince = 0L;
                 return;
@@ -79,6 +84,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
             main.removeCallbacks(notificationRunnable);
             stopForeground(STOP_FOREGROUND_REMOVE);
             foregroundStarted = false;
+            foregroundReady = false;
             stopSelf();
         }
     };
@@ -86,8 +92,12 @@ public final class ScooterService extends Service implements ScooterRepository.L
     public static boolean isRunning() { return running; }
 
     public static void startForConnectedScooter(Context context) {
-        if (running) return;
-        Intent intent = new Intent(context, ScooterService.class).setAction(ACTION_START);
+        // A service can still be alive while its foreground notification has been stopped or is
+        // showing the last offline snapshot. In that case do not let the old `running` flag swallow
+        // the READY event; send a one-shot sync command that republishes current repository state.
+        if (running && foregroundReady) return;
+        Intent intent = new Intent(context, ScooterService.class)
+                .setAction(running ? ACTION_SYNC : ACTION_START);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent);
             else context.startService(intent);
@@ -105,6 +115,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
     @Override public void onCreate() {
         super.onCreate();
         running = true;
+        foregroundReady = false;
         ensureNotificationChannels(this);
         repository = ScooterRepository.get(this);
         repository.addListener(this);
@@ -123,6 +134,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
             main.removeCallbacks(disconnectExpiryRunnable);
             if (foregroundStarted) stopForeground(STOP_FOREGROUND_REMOVE);
             foregroundStarted = false;
+            foregroundReady = false;
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -136,9 +148,9 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         boolean commandAction = ACTION_TOGGLE.equals(action);
-        if (!commandAction && !ACTION_MONITOR.equals(action)
-                && (current.connectionState != ScooterConnectionState.READY
-                || !current.telemetry.isConnected())) {
+        boolean syncAction = ACTION_SYNC.equals(action);
+        if (!commandAction && !ACTION_MONITOR.equals(action) && !syncAction
+                && !isReady(current)) {
             if (ACTION_START.equals(action)) repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
             stopSelf();
@@ -147,8 +159,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         startForeground(NOTIFICATION_ID, buildNotification(current));
         foregroundStarted = true;
-        boolean currentReady = current.connectionState == ScooterConnectionState.READY
-                && current.telemetry.isConnected();
+        boolean currentReady = isReady(current);
+        foregroundReady = currentReady;
         hadReadyConnection = hadReadyConnection || currentReady;
 
         if (ACTION_TOGGLE.equals(action)) {
@@ -157,6 +169,11 @@ public final class ScooterService extends Service implements ScooterRepository.L
             Boolean locked = repository.snapshot().telemetry.getLocked();
             transientTarget = locked == null || !locked;
             repository.toggleScooter();
+        } else if (ACTION_SYNC.equals(action)) {
+            monitoringMode = backgroundWanted;
+            transientAction = false;
+            transientTarget = null;
+            if (!currentReady && backgroundWanted) repository.connectIfNeeded();
         } else if (ACTION_MONITOR.equals(action)) {
             monitoringMode = true;
             transientAction = false;
@@ -175,9 +192,21 @@ public final class ScooterService extends Service implements ScooterRepository.L
     @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) {
         handleChargeAlert(snapshot);
 
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY
-                && snapshot.telemetry.isConnected();
+        boolean ready = isReady(snapshot);
+        boolean backgroundWanted = snapshot.persistent || snapshot.fullChargeAlert;
         boolean recovered = ready && disconnectedSince != 0L;
+
+        // Self-heal a service that survived while its foreground notification did not. This can
+        // happen in the narrow stopSelf/onDestroy window or after a failed foreground start. If the
+        // repository is already READY, republish the current snapshot immediately.
+        if (ready && backgroundWanted && !foregroundStarted) {
+            startForeground(NOTIFICATION_ID, buildNotification(snapshot));
+            foregroundStarted = true;
+            foregroundReady = true;
+            monitoringMode = true;
+            recovered = true;
+        }
+
         if (ready) {
             hadReadyConnection = true;
             disconnectedSince = 0L;
@@ -204,6 +233,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
                     repository.disconnect();
                     if (foregroundStarted) stopForeground(STOP_FOREGROUND_REMOVE);
                     foregroundStarted = false;
+                    foregroundReady = false;
                     stopSelf();
                 }
             }, 500);
@@ -231,7 +261,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private Notification buildNotification(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
+        boolean ready = isReady(snapshot);
         String title = notificationTitle(snapshot);
         String text = notificationText(snapshot);
         String actionLabel = ready
@@ -292,7 +322,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private String notificationText(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
+        boolean ready = isReady(snapshot);
         if (ready) {
             String speed = t.getSpeed() == null ? "— km/h"
                     : String.format(Locale.US, "%.1f km/h", t.getSpeed());
@@ -305,6 +335,11 @@ public final class ScooterService extends Service implements ScooterRepository.L
             return "🔴 Reconnecting";
         }
         return "🔴 Disconnected";
+    }
+
+    private static boolean isReady(ScooterRepository.Snapshot snapshot) {
+        return snapshot != null && snapshot.connectionState == ScooterConnectionState.READY
+                && snapshot.telemetry != null && snapshot.telemetry.isConnected();
     }
 
     private void handleChargeAlert(ScooterRepository.Snapshot snapshot) {
@@ -403,6 +438,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     @Override public void onDestroy() {
         running = false;
+        foregroundReady = false;
         main.removeCallbacks(notificationRunnable);
         main.removeCallbacks(disconnectExpiryRunnable);
         if (repository != null) repository.removeListener(this);
