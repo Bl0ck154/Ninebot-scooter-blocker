@@ -17,6 +17,8 @@ import android.graphics.drawable.Icon;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.GestureDetector;
@@ -54,14 +56,27 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private static final int ERROR_SOFT = Color.rgb(253, 236, 236);
     private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
 
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final ArrayList<View> livePanels = new ArrayList<>();
+
     private ScooterRepository repository;
-    private TextView titleText, deviceText, stateText, signalText, batteryPercentText, chargingText,
-            batteryText, rideText, tripText, rangeText, totalText, tempText, batteryHelpButton,
-            chargeSoundSettings;
+    private TextView titleText, deviceText, stateText, signalText, connectionHintText,
+            batteryPercentText, chargingText, batteryText, rideText, tripText, rangeText,
+            totalText, tempText, batteryHelpButton, chargeSoundSettings;
     private Button lockButton;
     private Switch persistentSwitch, autoConnectSwitch, chargeAlertSwitch;
     private boolean suppressSwitches;
     private boolean pendingChargeAlertPermission;
+    private ScooterConnectionState renderedConnectionState = ScooterConnectionState.DISCONNECTED;
+    private int connectionAnimationFrame;
+
+    private final Runnable connectionAnimation = new Runnable() {
+        @Override public void run() {
+            if (!isAnimatedConnectionState(renderedConnectionState) || stateText == null) return;
+            updateConnectionStateText();
+            ui.postDelayed(this, 450L);
+        }
+    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -82,6 +97,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     }
 
     @Override protected void onStop() {
+        ui.removeCallbacks(connectionAnimation);
         repository.removeListener(this);
         if (hasBlePermissions()) repository.setUiActive(false);
         super.onStop();
@@ -126,6 +142,12 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         chips.addView(signalText, wrapWithRight(0));
         root.addView(chips, full(dp(12)));
 
+        connectionHintText = text("Scooter is offline", 12, MUTED);
+        connectionHintText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        connectionHintText.setPadding(dp(12), dp(9), dp(12), dp(9));
+        connectionHintText.setVisibility(View.GONE);
+        root.addView(connectionHintText, full(dp(10)));
+
         LinearLayout hero = cardContainer();
         hero.setPadding(dp(16), dp(12), dp(16), dp(12));
         hero.addView(label("BATTERY"));
@@ -140,6 +162,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         batteryText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         hero.addView(batteryText);
         root.addView(hero, full(dp(8)));
+        livePanels.add(hero);
 
         TextView[] speedSession = addMetricPair(root, "Speed", "Session");
         rideText = speedSession[0];
@@ -156,9 +179,10 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         tempText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         tempCard.addView(tempText);
         root.addView(tempCard, full(dp(10)));
+        livePanels.add(tempCard);
 
         lockButton = new Button(this);
-        lockButton.setText("🔐  LOCK");
+        lockButton.setText("🔒  SCOOTER OFFLINE");
         lockButton.setTextSize(17);
         lockButton.setTextColor(Color.WHITE);
         lockButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -166,8 +190,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         lockButton.setMinHeight(0);
         lockButton.setMinimumHeight(0);
         lockButton.setPadding(dp(12), dp(12), dp(12), dp(12));
-        lockButton.setBackground(rounded(ACCENT, 14));
+        lockButton.setBackground(rounded(Color.rgb(152, 162, 179), 14));
         lockButton.setElevation(dp(2));
+        lockButton.setEnabled(false);
         lockButton.setOnClickListener(v -> {
             Boolean locked = repository.snapshot().telemetry.getLocked();
             if (Boolean.TRUE.equals(locked)) repository.unlockScooter();
@@ -309,6 +334,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         TextView left = addMetricCard(row, leftLabel, true);
         TextView right = addMetricCard(row, rightLabel, false);
         root.addView(row, full(dp(8)));
+        livePanels.add(row);
         return new TextView[]{left, right};
     }
 
@@ -382,18 +408,21 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     private void render(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
+        boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
         titleText.setText(snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName);
 
         String name = snapshot.deviceName == null || snapshot.deviceName.trim().isEmpty()
                 ? "Ninebot / Segway scooter" : snapshot.deviceName;
         deviceText.setText(snapshot.address == null ? "No scooter selected" : name + "  ·  " + snapshot.address);
 
-        stateText.setText(prettyState(snapshot.connectionState));
+        setRenderedConnectionState(snapshot.connectionState);
         styleConnectionChip(snapshot.connectionState);
-        styleSignalChip(t, snapshot.connectionState == ScooterConnectionState.READY && t.isConnected());
+        styleSignalChip(t, ready);
+        renderConnectionHint(snapshot, ready);
+        for (View panel : livePanels) panel.setAlpha(ready ? 1f : 0.48f);
 
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
-        if (t.isCharging()) {
+        if (ready && t.isCharging()) {
             boolean alt = ((System.currentTimeMillis() / 900L) & 1L) == 0L;
             chargingText.setText(alt ? "🔋 Charging" : "⚡ Charging");
             chargingText.setVisibility(View.VISIBLE);
@@ -410,12 +439,20 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         totalText.setText(t.getTotalDistance() == null ? "—" : f("%,.1f km", t.getTotalDistance()));
         tempText.setText(formatTemperature(t));
 
-        Boolean locked = t.getLocked();
-        boolean isLocked = Boolean.TRUE.equals(locked);
-        lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔐  LOCK");
-        lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
-        lockButton.setEnabled(snapshot.address != null);
-        lockButton.setAlpha(snapshot.address == null ? 0.45f : 1f);
+        if (ready) {
+            Boolean locked = t.getLocked();
+            boolean isLocked = Boolean.TRUE.equals(locked);
+            lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔐  LOCK");
+            lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
+            lockButton.setEnabled(true);
+            lockButton.setAlpha(1f);
+        } else {
+            boolean trying = isAnimatedConnectionState(snapshot.connectionState);
+            lockButton.setText(trying ? "…  WAITING FOR SCOOTER" : "🔒  SCOOTER OFFLINE");
+            lockButton.setBackground(rounded(Color.rgb(152, 162, 179), 14));
+            lockButton.setEnabled(false);
+            lockButton.setAlpha(0.68f);
+        }
 
         suppressSwitches = true;
         persistentSwitch.setChecked(snapshot.persistent);
@@ -426,10 +463,83 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         chargeSoundSettings.setVisibility(snapshot.fullChargeAlert ? View.VISIBLE : View.GONE);
         updateBatteryHelpVisibility(snapshot.persistent);
 
-        if (snapshot.persistent && snapshot.connectionState == ScooterConnectionState.READY
-                && snapshot.telemetry.isConnected() && hasNotificationPermission()) {
+        if (snapshot.persistent && ready && hasNotificationPermission()) {
             ScooterService.startForConnectedScooter(this);
         }
+    }
+
+    private void setRenderedConnectionState(ScooterConnectionState state) {
+        ScooterConnectionState safe = state == null ? ScooterConnectionState.DISCONNECTED : state;
+        boolean changed = safe != renderedConnectionState;
+        renderedConnectionState = safe;
+        if (!changed) {
+            if (!isAnimatedConnectionState(safe)) updateConnectionStateText();
+            return;
+        }
+        connectionAnimationFrame = 0;
+        ui.removeCallbacks(connectionAnimation);
+        updateConnectionStateText();
+        if (isAnimatedConnectionState(safe)) ui.postDelayed(connectionAnimation, 450L);
+    }
+
+    private void updateConnectionStateText() {
+        if (stateText == null) return;
+        String base = prettyState(renderedConnectionState);
+        if (!isAnimatedConnectionState(renderedConnectionState)) {
+            stateText.setText(base);
+            return;
+        }
+        int dots = connectionAnimationFrame++ % 4;
+        String suffix = dots == 0 ? "" : dots == 1 ? "." : dots == 2 ? ".." : "...";
+        stateText.setText(base + suffix);
+    }
+
+    private static boolean isAnimatedConnectionState(ScooterConnectionState state) {
+        return state == ScooterConnectionState.RECONNECTING
+                || state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.SCANNING
+                || state == ScooterConnectionState.CONNECTED;
+    }
+
+    private void renderConnectionHint(ScooterRepository.Snapshot snapshot, boolean ready) {
+        if (ready) {
+            connectionHintText.setVisibility(View.GONE);
+            return;
+        }
+        connectionHintText.setVisibility(View.VISIBLE);
+        int color = MUTED;
+        int background = Color.rgb(238, 241, 245);
+        String message;
+        if (snapshot.address == null) {
+            message = "No scooter selected. Use Change scooter to choose one.";
+        } else if (snapshot.connectionState == ScooterConnectionState.CONNECTED) {
+            color = WARNING_TEXT;
+            background = WARNING_SOFT;
+            message = "Bluetooth is connected; scooter authentication is still finishing. Controls stay disabled until READY.";
+        } else if (snapshot.connectionState == ScooterConnectionState.CONNECTING) {
+            color = WARNING_TEXT;
+            background = WARNING_SOFT;
+            message = "Connecting to the saved scooter. Live controls are disabled until it is ready.";
+        } else if (snapshot.connectionState == ScooterConnectionState.SCANNING) {
+            color = WARNING_TEXT;
+            background = WARNING_SOFT;
+            message = "Looking for the saved scooter nearby. Live controls are disabled while searching.";
+        } else if (snapshot.connectionState == ScooterConnectionState.RECONNECTING) {
+            color = WARNING_TEXT;
+            background = WARNING_SOFT;
+            message = "Scooter is offline right now. Auto-connect is retrying; live controls stay disabled.";
+        } else if (snapshot.connectionState == ScooterConnectionState.ERROR) {
+            color = ERROR_TEXT;
+            background = ERROR_SOFT;
+            message = snapshot.status == null || snapshot.status.trim().isEmpty()
+                    ? "Connection failed. Use Change scooter if the saved device has changed."
+                    : snapshot.status;
+        } else {
+            message = "Scooter is offline. Values above are last known; live controls are disabled.";
+        }
+        connectionHintText.setText(message);
+        connectionHintText.setTextColor(color);
+        connectionHintText.setBackground(rounded(background, 12));
     }
 
     private void styleConnectionChip(ScooterConnectionState state) {
