@@ -25,6 +25,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     public static final String PREF_FULL_CHARGE_ALERT = "full_charge_alert";
 
     private static final long RECONNECT_WATCHDOG_MS = 12000L;
+    private static final long FOREGROUND_BOOTSTRAP_WATCHDOG_MS = 8000L;
 
     public interface Listener { void onSnapshot(Snapshot snapshot); }
     public interface DiscoveryListener {
@@ -248,7 +249,16 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         }
 
         identityVerified = false;
+        reconnectAttempt = 0;
         ble.connect(address(), prefs.getString(PREF_NAME, null), false);
+        // A fresh foreground launch should not sit inside Android's direct-GATT path for 25s.
+        // If the remembered address is stale or Android's cache is cold after a phone reboot,
+        // fall back to discovery quickly while the user is looking at the dashboard.
+        if (uiActive && isAutoConnectEnabled()) {
+            armReconnectWatchdog(FOREGROUND_BOOTSTRAP_WATCHDOG_MS);
+        } else {
+            armReconnectWatchdog();
+        }
     }
 
     public void disconnect() {
@@ -325,6 +335,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         rideStats.onDisconnected();
         identityVerified = false;
+        reconnectAttempt = 0;
         pendingDesiredLock = null;
         clearConnectionDerivedTelemetry();
         telemetry.setLocked(null);
@@ -413,6 +424,7 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     @Override public void onDisconnected(String reason) {
+        boolean failedForegroundBootstrap = isFailedForegroundBootstrap();
         cancelReconnectWatchdog();
         identityVerified = false;
         clearConnectionDerivedTelemetry();
@@ -421,7 +433,8 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
         stopPolling();
         status = reason == null ? "Disconnected" : reason;
         if (shouldStayConnected() && isAutoConnectEnabled() && hasRememberedScooter()) {
-            scheduleReconnect();
+            if (failedForegroundBootstrap) startDiscoveryFallbackNow();
+            else scheduleReconnect();
         } else {
             setState(ScooterConnectionState.DISCONNECTED, status);
         }
@@ -435,6 +448,25 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     private boolean shouldStayConnected() {
         return uiActive || isPersistentEnabled() || isFullChargeAlertEnabled() || pendingDesiredLock != null;
+    }
+
+    private boolean isFailedForegroundBootstrap() {
+        return uiActive && reconnectAttempt == 0
+                && (state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.CONNECTED);
+    }
+
+    private void startDiscoveryFallbackNow() {
+        if (!shouldStayConnected() || !isAutoConnectEnabled() || !hasRememberedScooter()) return;
+        stopPolling();
+        cancelReconnectWatchdog();
+        main.removeCallbacks(reconnectRunnable);
+        // 3 is a discovery slot in runReconnectAttempt(). Jump there immediately after the
+        // first foreground direct-GATT failure instead of making the user wait through two more
+        // direct attempts. This is especially useful after a phone reboot or a changed BLE MAC.
+        reconnectAttempt = 3;
+        setState(ScooterConnectionState.RECONNECTING, "Looking for saved scooter…");
+        main.post(reconnectRunnable);
     }
 
     private void scheduleReconnect() {
@@ -491,9 +523,13 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
     }
 
     private void armReconnectWatchdog() {
+        armReconnectWatchdog(RECONNECT_WATCHDOG_MS);
+    }
+
+    private void armReconnectWatchdog(long delayMs) {
         main.removeCallbacks(reconnectWatchdog);
         if (shouldStayConnected() && !ble.isReady()) {
-            main.postDelayed(reconnectWatchdog, RECONNECT_WATCHDOG_MS);
+            main.postDelayed(reconnectWatchdog, Math.max(1000L, delayMs));
         }
     }
 
@@ -501,7 +537,12 @@ public final class ScooterRepository implements ScooterBleManager.Listener {
 
     private void onReconnectWatchdog() {
         if (!shouldStayConnected() || !isAutoConnectEnabled() || ble.isReady()) return;
+        boolean failedForegroundBootstrap = isFailedForegroundBootstrap();
         ble.disconnectSilently();
+        if (failedForegroundBootstrap) {
+            startDiscoveryFallbackNow();
+            return;
+        }
         setState(ScooterConnectionState.RECONNECTING, "Reconnect attempt timed out…");
         scheduleReconnect();
     }
