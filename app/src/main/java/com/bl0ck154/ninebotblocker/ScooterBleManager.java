@@ -87,6 +87,11 @@ public final class ScooterBleManager {
 
                 @Override public void onStatus(String status) {
                     if (!current()) return;
+                    NinebotBleClient active = client;
+                    // POWER/auth status messages belong to the pre-READY phase. They can be
+                    // delivered late through Android/main-thread queues, so never let one of them
+                    // downgrade an already authenticated session back to CONNECTING/RECONNECTING.
+                    if (active != null && active.isReady()) return;
                     if (status != null && status.contains("POWER")) {
                         listener.onConnectionState(reconnectAttempt
                                 ? ScooterConnectionState.RECONNECTING
