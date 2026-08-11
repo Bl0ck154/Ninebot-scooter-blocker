@@ -122,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Calendar and dashboard polish. Fixes the activity heatmap jumping backwards whenever an older square is selected by separating the selected day from the 17-week calendar viewport. The calendar now has explicit back/forward history controls, a visible date-range label with years, and day/week titles that always include the year. Heatmap taps are also protected against accidental selection while vertically scrolling. The main dashboard now uses a dedicated ripple/elevated Statistics card with a calendar/history subtitle instead of the old plain button. Ride splitting, BLE, lock/unlock, charging and notification behavior are unchanged.'
+          NOTES='Reconnect and offline-state polish. A fresh foreground auto-connect now has an 8-second watchdog: if Android direct GATT stalls or the remembered BLE address is stale after a phone reboot, the app immediately falls back to a balanced discovery pass instead of waiting through multiple long direct retries. The dashboard now clearly separates offline/reconnecting/connecting/authenticating states, animates the connection label with moving dots, dims live telemetry while offline, shows an explanatory offline banner, and disables the lock button until the scooter is fully READY. Statistics and recovery actions remain available while disconnected. G30 authentication, telemetry packets and lock/unlock protocol bytes are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
