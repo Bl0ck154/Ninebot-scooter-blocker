@@ -16,6 +16,38 @@
 
 ---
 
+## Why I built this
+
+I made this app because I wanted two very simple things from my scooter that were awkward to get from the usual apps: **keep my own phone connected to the scooter in the background** and have a **fast software lock that is always one tap away**.
+
+### 🔗 Killer feature #1 — keep your own BLE connection alive
+
+With **Persistent connection** enabled, the app tries to keep the authenticated BLE connection to the remembered scooter alive and automatically reconnect when the scooter wakes up again.
+
+That is useful for more than just live telemetry. On the G30, the active control connection is normally occupied by one client at a time, so keeping your own phone connected also reduces the opportunity for another nearby phone/app to establish the control connection while yours is active.
+
+This is **not a cryptographic anti-theft guarantee** and should not be treated as one. It is simply another useful layer on top of the scooter's normal behavior.
+
+### 🔐 Killer feature #2 — software lock as a second layer
+
+The software lock is not supposed to make a scooter impossible to steal. Think of it as **additional protection / a deterrent**.
+
+When locked, the scooter cannot simply be ridden away normally and becomes much more awkward to move. That makes it useful together with a **physical lock**: even if somebody cuts or breaks the physical lock, they still cannot just jump on the scooter and ride away immediately. To somebody who does not know what happened, the scooter may simply look disabled or broken.
+
+For a very short stop — for example stepping into a shop for a couple of minutes while you stay nearby — the quick lock is also convenient because it removes the easiest theft scenario: someone casually riding away on an unlocked scooter.
+
+But there is an important limit: **software lock does not stop somebody from lifting the scooter, folding it, carrying it away or putting it into a car.** If the scooter is going to be left unattended, use a proper physical lock as well. This app is an extra layer, not a replacement for physical security.
+
+In short:
+
+**physical lock = stops easy removal**  
+**software lock = stops easy riding**  
+**persistent BLE = keeps your own control connection active**
+
+Everything else in the app — telemetry, ride sessions, the activity calendar, charge alerts and statistics — grew around those two original ideas.
+
+---
+
 ## What is it?
 
 **Ninebot Scooter Blocker** is a tiny daily-use Android companion built around the BLE/authentication implementation hardware-tested on the **Ninebot Max G30**.
