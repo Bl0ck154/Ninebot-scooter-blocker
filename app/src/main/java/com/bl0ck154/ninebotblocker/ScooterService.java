@@ -7,8 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -23,6 +22,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
     public static final String ACTION_SYNC = "com.bl0ck154.ninebotblocker.SYNC";
     public static final String ACTION_MONITOR = "com.bl0ck154.ninebotblocker.MONITOR";
     public static final String ACTION_STOP_NOTIFICATION = "com.bl0ck154.ninebotblocker.STOP_NOTIFICATION";
+    public static final String ACTION_DISMISS_OFFLINE = "com.bl0ck154.ninebotblocker.DISMISS_OFFLINE";
     public static final String ACTION_TOGGLE = "com.bl0ck154.ninebotblocker.TOGGLE";
 
     public static final String LIVE_CHANNEL_ID = "scooter_live_priority_v2";
@@ -30,7 +30,10 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private static final int NOTIFICATION_ID = 15430;
     private static final int CHARGE_NOTIFICATION_ID = 15431;
-    private static final long NOTIFICATION_THROTTLE_MS = 1500;
+    private static final long NOTIFICATION_THROTTLE_MS = 1500L;
+    private static final long OFFLINE_NOTIFICATION_GRACE_MS = 30L * 60L * 1000L;
+    private static final String SERVICE_PREFS = "scooter_service_state";
+    private static final String PREF_OFFLINE_SINCE = "offline_since";
     private static final int SIGNAL_GREEN = 0xFF007E79;
     private static final int SIGNAL_RED = 0xFFB42318;
     private static final int SIGNAL_MUTED = 0xFF5F6368;
@@ -49,7 +52,6 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private Boolean transientTarget;
     private boolean monitoringMode;
     private boolean foregroundStarted;
-    private boolean hadReadyConnection;
 
     private Integer lastBatteryPercent;
     private boolean chargeSessionObserved;
@@ -67,25 +69,19 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private final Runnable disconnectExpiryRunnable = new Runnable() {
         @Override public void run() {
-            if (!foregroundStarted || disconnectedSince == 0L || repository == null) return;
+            if (!foregroundStarted || repository == null) return;
             ScooterRepository.Snapshot current = repository.snapshot();
-            boolean ready = isReady(current);
-            if (ready) {
-                disconnectedSince = 0L;
+            if (isReady(current)) {
+                clearOfflineSince();
                 return;
             }
-            long grace = notificationGraceMs();
-            long elapsed = System.currentTimeMillis() - disconnectedSince;
-            if (elapsed < grace) {
-                main.postDelayed(this, grace - elapsed);
+            long since = ensureOfflineSince();
+            long elapsed = Math.max(0L, System.currentTimeMillis() - since);
+            if (elapsed < OFFLINE_NOTIFICATION_GRACE_MS) {
+                main.postDelayed(this, OFFLINE_NOTIFICATION_GRACE_MS - elapsed);
                 return;
             }
-            pendingSnapshot = null;
-            main.removeCallbacks(notificationRunnable);
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            foregroundStarted = false;
-            foregroundReady = false;
-            stopSelf();
+            expireOfflineNotification();
         }
     };
 
@@ -116,6 +112,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         super.onCreate();
         running = true;
         foregroundReady = false;
+        disconnectedSince = offlineStatePrefs().getLong(PREF_OFFLINE_SINCE, 0L);
         ensureNotificationChannels(this);
         repository = ScooterRepository.get(this);
         repository.addListener(this);
@@ -128,7 +125,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
             repository.setFullChargeAlertEnabled(false);
             repository.setPersistentEnabled(false);
             monitoringMode = false;
-            disconnectedSince = 0L;
+            clearOfflineSince();
             pendingSnapshot = null;
             main.removeCallbacks(notificationRunnable);
             main.removeCallbacks(disconnectExpiryRunnable);
@@ -140,7 +137,15 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         ScooterRepository.Snapshot current = repository.snapshot();
+        boolean currentReady = isReady(current);
         boolean backgroundWanted = repository.isPersistentEnabled() || repository.isFullChargeAlertEnabled();
+
+        if (ACTION_DISMISS_OFFLINE.equals(action)) {
+            if (!currentReady) expireOfflineNotification();
+            return START_NOT_STICKY;
+        }
+
+        if (currentReady) clearOfflineSince();
 
         if (action == null && !backgroundWanted) {
             stopSelf();
@@ -149,19 +154,25 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         boolean commandAction = ACTION_TOGGLE.equals(action);
         boolean syncAction = ACTION_SYNC.equals(action);
-        if (!commandAction && !ACTION_MONITOR.equals(action) && !syncAction
-                && !isReady(current)) {
+        boolean monitorAction = ACTION_MONITOR.equals(action);
+        if (!commandAction && !monitorAction && !syncAction && !currentReady) {
             if (ACTION_START.equals(action)) repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
             stopSelf();
             return START_NOT_STICKY;
         }
 
+        // Never resurrect an offline foreground notification once its 30-minute grace has expired.
+        // Reconnect attempts may continue best-effort in the repository while the process lives.
+        if (!currentReady && (monitorAction || syncAction) && offlineGraceExpired()) {
+            repository.connectIfNeeded();
+            expireOfflineNotification();
+            return START_NOT_STICKY;
+        }
+
         startForeground(NOTIFICATION_ID, buildNotification(current));
         foregroundStarted = true;
-        boolean currentReady = isReady(current);
         foregroundReady = currentReady;
-        hadReadyConnection = hadReadyConnection || currentReady;
 
         if (ACTION_TOGGLE.equals(action)) {
             monitoringMode = backgroundWanted;
@@ -186,6 +197,11 @@ public final class ScooterService extends Service implements ScooterRepository.L
             repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
         }
+
+        if (!currentReady) {
+            ensureOfflineSince();
+            scheduleDisconnectExpiry();
+        }
         return START_STICKY;
     }
 
@@ -208,20 +224,26 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         if (ready) {
-            hadReadyConnection = true;
-            disconnectedSince = 0L;
+            clearOfflineSince();
             main.removeCallbacks(disconnectExpiryRunnable);
         }
 
-        if (monitoringMode && hadReadyConnection && !ready && foregroundStarted) {
-            if (disconnectedSince == 0L) disconnectedSince = System.currentTimeMillis();
+        // The old implementation only started this timer if this exact Service instance remembered
+        // a prior READY connection. After Service recreation that flag was false, so an offline FGS
+        // could live forever. Any foreground offline notification now gets the same persisted clock.
+        if (!ready && monitoringMode && foregroundStarted) {
+            ensureOfflineSince();
+            if (offlineGraceExpired()) {
+                expireOfflineNotification();
+                return;
+            }
             scheduleDisconnectExpiry();
             queueNotification(snapshot, true);
             return;
         }
 
         // Telemetry churn is throttled, but a reconnect transition is user-visible state and
-        // should replace the stale red RECONNECT label immediately.
+        // should replace a stale red reconnect label immediately.
         if (foregroundStarted && ready) queueNotification(snapshot, recovered);
 
         if (transientAction && transientTarget != null
@@ -242,13 +264,48 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private void scheduleDisconnectExpiry() {
         main.removeCallbacks(disconnectExpiryRunnable);
+        long since = ensureOfflineSince();
         long remaining = Math.max(0L,
-                disconnectedSince + notificationGraceMs() - System.currentTimeMillis());
+                since + OFFLINE_NOTIFICATION_GRACE_MS - System.currentTimeMillis());
         main.postDelayed(disconnectExpiryRunnable, remaining);
     }
 
-    private long notificationGraceMs() {
-        return repository == null ? 20L * 60L * 1000L : repository.getRidePauseTimeoutMs();
+    private boolean offlineGraceExpired() {
+        long since = ensureOfflineSince();
+        return System.currentTimeMillis() - since >= OFFLINE_NOTIFICATION_GRACE_MS;
+    }
+
+    private long ensureOfflineSince() {
+        if (disconnectedSince > 0L) return disconnectedSince;
+        SharedPreferences prefs = offlineStatePrefs();
+        long now = System.currentTimeMillis();
+        long stored = prefs.getLong(PREF_OFFLINE_SINCE, 0L);
+        if (stored <= 0L || stored > now) {
+            stored = now;
+            prefs.edit().putLong(PREF_OFFLINE_SINCE, stored).apply();
+        }
+        disconnectedSince = stored;
+        return stored;
+    }
+
+    private void clearOfflineSince() {
+        disconnectedSince = 0L;
+        offlineStatePrefs().edit().remove(PREF_OFFLINE_SINCE).apply();
+    }
+
+    private SharedPreferences offlineStatePrefs() {
+        return getSharedPreferences(SERVICE_PREFS, Context.MODE_PRIVATE);
+    }
+
+    private void expireOfflineNotification() {
+        pendingSnapshot = null;
+        monitoringMode = false;
+        main.removeCallbacks(notificationRunnable);
+        main.removeCallbacks(disconnectExpiryRunnable);
+        if (foregroundStarted) stopForeground(STOP_FOREGROUND_REMOVE);
+        foregroundStarted = false;
+        foregroundReady = false;
+        stopSelf();
     }
 
     private void queueNotification(ScooterRepository.Snapshot snapshot, boolean immediate) {
@@ -292,12 +349,15 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 .setContentIntent(content)
                 .setCustomContentView(compact)
                 .setStyle(new Notification.DecoratedCustomViewStyle())
-                .setOngoing(true)
+                // While connected it is a true persistent control. Offline it is dismissible;
+                // ACTION_DISMISS_OFFLINE stops this FGS so the app does not immediately repost it.
+                .setOngoing(ready)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setPriority(Notification.PRIORITY_HIGH);
+        if (!ready) builder.setDeleteIntent(servicePendingIntent(ACTION_DISMISS_OFFLINE, 12));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
         }
@@ -387,18 +447,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setPriority(Notification.PRIORITY_MAX);
         manager.notify(CHARGE_NOTIFICATION_ID, builder.build());
-        playChargeBeep();
-    }
-
-    /** Short, low-key double beep on the notification audio stream; no bundled audio asset. */
-    private void playChargeBeep() {
-        try {
-            ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55);
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 350);
-            main.postDelayed(() -> {
-                try { tone.release(); } catch (RuntimeException ignored) {}
-            }, 600L);
-        } catch (RuntimeException ignored) {}
+        ChargeChime.play();
     }
 
     private PendingIntent servicePendingIntent(String action, int requestCode) {
@@ -421,7 +470,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         live.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         manager.createNotificationChannel(live);
 
-        // v2 intentionally stays silent: the app emits its own short, consistent double-beep.
+        // The notification channel stays silent because the app emits its own generated chime.
         NotificationChannel charge = new NotificationChannel(
                 CHARGE_CHANNEL_ID, "Full charge alerts", NotificationManager.IMPORTANCE_HIGH);
         charge.setDescription("Alert when the scooter battery reaches 100% while charging");

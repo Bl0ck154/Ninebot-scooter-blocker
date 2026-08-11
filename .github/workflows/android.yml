@@ -122,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Notification lifecycle resynchronization hotfix. Fixes a remaining case where the BLE repository could already be READY and lock/unlock worked while the foreground notification was still showing an old offline/reconnect snapshot. The service now distinguishes merely being alive from having a READY notification, accepts an explicit one-shot SYNC when needed, and can self-heal a live service whose foreground notification was stopped or stale. Reconnect state transitions remain immediate. v0.12.3 READY callback guards, v0.12.2 reboot/discovery fallback, G30 protocol bytes, ride statistics and charging logic are unchanged.'
+          NOTES='Offline notification lifetime and charge sound fix. The disconnected foreground notification now has a fixed 30-minute grace measured from the first loss of connection, and that timestamp survives Service recreation so the reconnect notification cannot live forever or reset its timer. Offline notifications are dismissible on supported Android versions; dismissing one stops that foreground notification instead of immediately reposting it. Full-charge alerts now play a short app-owned two-note PCM chime generated at runtime rather than relying on a ringtone or ToneGenerator. v0.12.4 notification resync, v0.12.3 READY guards, v0.12.2 reconnect recovery, G30 authentication, telemetry, ride statistics and lock/unlock protocol bytes are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
