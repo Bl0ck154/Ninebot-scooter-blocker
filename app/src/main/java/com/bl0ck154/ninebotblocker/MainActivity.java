@@ -17,6 +17,8 @@ import android.graphics.drawable.Icon;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.GestureDetector;
@@ -41,6 +43,7 @@ import java.util.Locale;
 public final class MainActivity extends Activity implements ScooterRepository.Listener {
     private static final int REQ_BLE = 42;
     private static final int REQ_NOTIFICATIONS = 43;
+    private static final long FOREGROUND_CONNECT_WATCHDOG_MS = 14000L;
 
     private static final int BG = Color.rgb(245, 247, 250);
     private static final int CARD = Color.WHITE;
@@ -54,14 +57,41 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     private static final int ERROR_SOFT = Color.rgb(253, 236, 236);
     private static final int ERROR_TEXT = Color.rgb(180, 35, 24);
 
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+
     private ScooterRepository repository;
-    private TextView titleText, deviceText, stateText, signalText, batteryPercentText, chargingText,
-            batteryText, rideText, tripText, rangeText, totalText, tempText, batteryHelpButton,
-            chargeSoundSettings;
+    private TextView titleText, deviceText, stateText, signalText, connectionHint,
+            batteryPercentText, chargingText, batteryText, rideText, tripText, rangeText,
+            totalText, tempText, batteryHelpButton, chargeSoundSettings;
     private Button lockButton;
     private Switch persistentSwitch, autoConnectSwitch, chargeAlertSwitch;
     private boolean suppressSwitches;
     private boolean pendingChargeAlertPermission;
+    private ScooterConnectionState animatedState;
+    private int dotFrame;
+
+    private final Runnable connectionAnimationRunnable = new Runnable() {
+        @Override public void run() {
+            if (stateText == null || !isAnimatedState(animatedState)) return;
+            dotFrame = (dotFrame + 1) % 4;
+            stateText.setText(stateBaseLabel(animatedState) + dots(dotFrame));
+            uiHandler.postDelayed(this, 450L);
+        }
+    };
+
+    private final Runnable foregroundConnectWatchdog = () -> {
+        if (repository == null || !hasBlePermissions()) return;
+        ScooterRepository.Snapshot snapshot = repository.snapshot();
+        if (snapshot.telemetry.isConnected() || snapshot.address == null || !snapshot.autoConnect) return;
+        if (snapshot.connectionState != ScooterConnectionState.CONNECTING
+                && snapshot.connectionState != ScooterConnectionState.CONNECTED) return;
+
+        // The repository reconnect loop already has its own watchdog. This only covers the first
+        // foreground GATT connection after a fresh process/phone boot, which otherwise could sit
+        // in CONNECTING forever if Android's Bluetooth stack never returned a terminal callback.
+        repository.disconnect();
+        repository.connectIfNeeded();
+    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -78,10 +108,16 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
     @Override protected void onStart() {
         super.onStart();
         repository.addListener(this);
-        if (hasBlePermissions()) repository.setUiActive(true);
+        if (hasBlePermissions()) {
+            repository.setUiActive(true);
+            if (repository.isAutoConnectEnabled()) repository.connectIfNeeded();
+        }
     }
 
     @Override protected void onStop() {
+        uiHandler.removeCallbacks(connectionAnimationRunnable);
+        uiHandler.removeCallbacks(foregroundConnectWatchdog);
+        animatedState = null;
         repository.removeListener(this);
         if (hasBlePermissions()) repository.setUiActive(false);
         super.onStop();
@@ -124,7 +160,15 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         signalText = chip("Signal —");
         chips.addView(stateText, wrapWithRight(dp(8)));
         chips.addView(signalText, wrapWithRight(0));
-        root.addView(chips, full(dp(12)));
+        root.addView(chips, full(dp(6)));
+
+        connectionHint = text("Scooter is offline", 12, MUTED);
+        connectionHint.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        connectionHint.setPadding(dp(11), dp(8), dp(11), dp(8));
+        connectionHint.setBackground(stroked(ERROR_SOFT, Color.rgb(244, 196, 194), 12));
+        connectionHint.setVisibility(View.GONE);
+        connectionHint.setOnClickListener(v -> retryConnectionNow());
+        root.addView(connectionHint, full(dp(10)));
 
         LinearLayout hero = cardContainer();
         hero.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -158,7 +202,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         root.addView(tempCard, full(dp(10)));
 
         lockButton = new Button(this);
-        lockButton.setText("🔐  LOCK");
+        lockButton.setText("🔒  SCOOTER OFFLINE");
         lockButton.setTextSize(17);
         lockButton.setTextColor(Color.WHITE);
         lockButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -166,8 +210,9 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         lockButton.setMinHeight(0);
         lockButton.setMinimumHeight(0);
         lockButton.setPadding(dp(12), dp(12), dp(12), dp(12));
-        lockButton.setBackground(rounded(ACCENT, 14));
+        lockButton.setBackground(rounded(Color.rgb(152, 162, 179), 14));
         lockButton.setElevation(dp(2));
+        lockButton.setEnabled(false);
         lockButton.setOnClickListener(v -> {
             Boolean locked = repository.snapshot().telemetry.getLocked();
             if (Boolean.TRUE.equals(locked)) repository.unlockScooter();
@@ -255,6 +300,14 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
         setContentView(scroll);
         if (Build.VERSION.SDK_INT >= 35) root.requestApplyInsets();
+    }
+
+    private void retryConnectionNow() {
+        if (!hasBlePermissions() || repository == null || !repository.hasRememberedScooter()) return;
+        ScooterRepository.Snapshot snapshot = repository.snapshot();
+        if (snapshot.telemetry.isConnected()) return;
+        repository.disconnect();
+        repository.connectIfNeeded();
     }
 
     private void openStatistics() {
@@ -382,18 +435,23 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
 
     private void render(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        titleText.setText(snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName);
+        boolean ready = t.isConnected();
+        ScooterConnectionState visualState = ready
+                ? ScooterConnectionState.READY : snapshot.connectionState;
 
+        titleText.setText(snapshot.modelName == null ? "Ninebot / Segway Scooter" : snapshot.modelName);
         String name = snapshot.deviceName == null || snapshot.deviceName.trim().isEmpty()
                 ? "Ninebot / Segway scooter" : snapshot.deviceName;
         deviceText.setText(snapshot.address == null ? "No scooter selected" : name + "  ·  " + snapshot.address);
 
-        stateText.setText(prettyState(snapshot.connectionState));
-        styleConnectionChip(snapshot.connectionState);
-        styleSignalChip(t, snapshot.connectionState == ScooterConnectionState.READY && t.isConnected());
+        updateConnectionAnimation(visualState);
+        styleConnectionChip(visualState);
+        styleSignalChip(t, ready);
+        styleConnectionHint(snapshot, visualState, ready);
+        armForegroundWatchdogIfNeeded(snapshot, visualState, ready);
 
         batteryPercentText.setText(t.getBatteryPercent() == null ? "--%" : t.getBatteryPercent() + "%");
-        if (t.isCharging()) {
+        if (ready && t.isCharging()) {
             boolean alt = ((System.currentTimeMillis() / 900L) & 1L) == 0L;
             chargingText.setText(alt ? "🔋 Charging" : "⚡ Charging");
             chargingText.setVisibility(View.VISIBLE);
@@ -403,19 +461,33 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             batteryPercentText.setTextColor(TEXT);
         }
         batteryText.setText(formatBattery(t));
-        rideText.setText(t.getSpeed() == null ? "—" : f("%.1f km/h", t.getSpeed()));
+        rideText.setText(ready && t.getSpeed() != null ? f("%.1f km/h", t.getSpeed()) : "—");
         double sessionKm = snapshot.rideStats == null ? 0.0 : snapshot.rideStats.currentDistanceKm();
         tripText.setText(f("%.2f km", sessionKm));
         rangeText.setText(t.getRemainingRange() == null ? "—" : f("%.1f km", t.getRemainingRange()));
         totalText.setText(t.getTotalDistance() == null ? "—" : f("%,.1f km", t.getTotalDistance()));
         tempText.setText(formatTemperature(t));
+        setLiveTelemetryAlpha(ready);
 
-        Boolean locked = t.getLocked();
-        boolean isLocked = Boolean.TRUE.equals(locked);
-        lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔐  LOCK");
-        lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
-        lockButton.setEnabled(snapshot.address != null);
-        lockButton.setAlpha(snapshot.address == null ? 0.45f : 1f);
+        if (ready) {
+            Boolean locked = t.getLocked();
+            boolean isLocked = Boolean.TRUE.equals(locked);
+            lockButton.setText(isLocked ? "🔓  UNLOCK" : "🔐  LOCK");
+            lockButton.setBackground(rounded(isLocked ? Color.rgb(31, 41, 55) : ACCENT, 14));
+            lockButton.setEnabled(true);
+            lockButton.setAlpha(1f);
+        } else {
+            lockButton.setEnabled(false);
+            lockButton.setBackground(rounded(Color.rgb(152, 162, 179), 14));
+            if (snapshot.address == null) {
+                lockButton.setText("SELECT SCOOTER TO LOCK");
+            } else if (isAnimatedState(visualState)) {
+                lockButton.setText("⏳  CONNECTING…");
+            } else {
+                lockButton.setText("🔒  SCOOTER OFFLINE");
+            }
+            lockButton.setAlpha(0.55f);
+        }
 
         suppressSwitches = true;
         persistentSwitch.setChecked(snapshot.persistent);
@@ -426,10 +498,79 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         chargeSoundSettings.setVisibility(snapshot.fullChargeAlert ? View.VISIBLE : View.GONE);
         updateBatteryHelpVisibility(snapshot.persistent);
 
-        if (snapshot.persistent && snapshot.connectionState == ScooterConnectionState.READY
-                && snapshot.telemetry.isConnected() && hasNotificationPermission()) {
+        if (snapshot.persistent && ready && hasNotificationPermission()) {
             ScooterService.startForConnectedScooter(this);
         }
+    }
+
+    private void updateConnectionAnimation(ScooterConnectionState state) {
+        if (state == animatedState) return;
+        uiHandler.removeCallbacks(connectionAnimationRunnable);
+        animatedState = state;
+        dotFrame = 0;
+        if (isAnimatedState(state)) {
+            stateText.setText(stateBaseLabel(state));
+            uiHandler.postDelayed(connectionAnimationRunnable, 450L);
+        } else {
+            stateText.setText(prettyState(state));
+        }
+    }
+
+    private void armForegroundWatchdogIfNeeded(ScooterRepository.Snapshot snapshot,
+                                                ScooterConnectionState state,
+                                                boolean ready) {
+        uiHandler.removeCallbacks(foregroundConnectWatchdog);
+        if (!ready && snapshot.address != null && snapshot.autoConnect
+                && (state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.CONNECTED)) {
+            uiHandler.postDelayed(foregroundConnectWatchdog, FOREGROUND_CONNECT_WATCHDOG_MS);
+        }
+    }
+
+    private void styleConnectionHint(ScooterRepository.Snapshot snapshot,
+                                     ScooterConnectionState state,
+                                     boolean ready) {
+        if (ready) {
+            connectionHint.setVisibility(View.GONE);
+            return;
+        }
+        connectionHint.setVisibility(View.VISIBLE);
+        boolean transitional = isAnimatedState(state);
+        int bg = transitional ? WARNING_SOFT : ERROR_SOFT;
+        int border = transitional ? Color.rgb(244, 213, 170) : Color.rgb(244, 196, 194);
+        int fg = transitional ? WARNING_TEXT : ERROR_TEXT;
+        connectionHint.setTextColor(fg);
+        connectionHint.setBackground(stroked(bg, border, 12));
+
+        if (snapshot.address == null) {
+            connectionHint.setText("No scooter selected · use Change scooter below");
+        } else if (state == ScooterConnectionState.RECONNECTING) {
+            connectionHint.setText("Scooter offline · automatic reconnect is running");
+        } else if (state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.CONNECTED
+                || state == ScooterConnectionState.SCANNING) {
+            connectionHint.setText("Scooter offline · connection in progress");
+        } else if (state == ScooterConnectionState.ERROR) {
+            String detail = snapshot.status == null || snapshot.status.trim().isEmpty()
+                    ? "Connection failed" : snapshot.status;
+            connectionHint.setText(detail + " · tap here to retry");
+        } else if (!snapshot.autoConnect) {
+            connectionHint.setText("Scooter offline · Auto connect is off · tap here to retry");
+        } else {
+            connectionHint.setText("Scooter offline · tap here to retry now");
+        }
+    }
+
+    private void setLiveTelemetryAlpha(boolean ready) {
+        float alpha = ready ? 1f : 0.38f;
+        batteryPercentText.setAlpha(alpha);
+        batteryText.setAlpha(alpha);
+        rideText.setAlpha(alpha);
+        rangeText.setAlpha(alpha);
+        totalText.setAlpha(alpha);
+        tempText.setAlpha(alpha);
+        // Session distance is app-side history and remains valid while the scooter is offline.
+        tripText.setAlpha(1f);
     }
 
     private void styleConnectionChip(ScooterConnectionState state) {
@@ -438,10 +579,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         if (state == ScooterConnectionState.READY) {
             bg = ACCENT_SOFT;
             fg = ACCENT;
-        } else if (state == ScooterConnectionState.RECONNECTING
-                || state == ScooterConnectionState.CONNECTING
-                || state == ScooterConnectionState.SCANNING
-                || state == ScooterConnectionState.CONNECTED) {
+        } else if (isAnimatedState(state)) {
             bg = WARNING_SOFT;
             fg = WARNING_TEXT;
         } else if (state == ScooterConnectionState.ERROR) {
@@ -569,10 +707,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
             ScooterRepository.Snapshot snapshot = repository.snapshot();
-            if (snapshot.connectionState == ScooterConnectionState.READY
-                    && snapshot.telemetry.isConnected()) {
-                ScooterService.startForConnectedScooter(this);
-            }
+            if (snapshot.telemetry.isConnected()) ScooterService.startForConnectedScooter(this);
         } else {
             if (repository.isFullChargeAlertEnabled()) repository.setFullChargeAlertEnabled(false);
             repository.setPersistentEnabled(false);
@@ -587,10 +722,7 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
             if (!repository.isPersistentEnabled()) repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
             ScooterRepository.Snapshot snapshot = repository.snapshot();
-            if (snapshot.connectionState == ScooterConnectionState.READY
-                    && snapshot.telemetry.isConnected()) {
-                ScooterService.startForConnectedScooter(this);
-            }
+            if (snapshot.telemetry.isConnected()) ScooterService.startForConnectedScooter(this);
             Toast.makeText(this,
                     "Full-charge alert armed. A short double-beep will play when charging reaches 100%.",
                     Toast.LENGTH_LONG).show();
@@ -666,9 +798,13 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
                                                       int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_BLE) {
-            if (hasBlePermissions()) repository.setUiActive(true);
-            else Toast.makeText(this, "Bluetooth access is required to connect to the scooter.",
-                    Toast.LENGTH_LONG).show();
+            if (hasBlePermissions()) {
+                repository.setUiActive(true);
+                if (repository.isAutoConnectEnabled()) repository.connectIfNeeded();
+            } else {
+                Toast.makeText(this, "Bluetooth access is required to connect to the scooter.",
+                        Toast.LENGTH_LONG).show();
+            }
         } else if (requestCode == REQ_NOTIFICATIONS) {
             boolean granted = hasNotificationPermission();
             if (granted) {
@@ -687,6 +823,28 @@ public final class MainActivity extends Activity implements ScooterRepository.Li
         suppressSwitches = true;
         button.setChecked(checked);
         suppressSwitches = false;
+    }
+
+    private static boolean isAnimatedState(ScooterConnectionState state) {
+        return state == ScooterConnectionState.RECONNECTING
+                || state == ScooterConnectionState.CONNECTING
+                || state == ScooterConnectionState.SCANNING
+                || state == ScooterConnectionState.CONNECTED;
+    }
+
+    private static String stateBaseLabel(ScooterConnectionState state) {
+        if (state == ScooterConnectionState.RECONNECTING) return "Reconnecting";
+        if (state == ScooterConnectionState.CONNECTING) return "Connecting";
+        if (state == ScooterConnectionState.SCANNING) return "Scanning";
+        if (state == ScooterConnectionState.CONNECTED) return "Authenticating";
+        return prettyState(state);
+    }
+
+    private static String dots(int count) {
+        if (count <= 0) return "";
+        if (count == 1) return ".";
+        if (count == 2) return "..";
+        return "...";
     }
 
     private static String prettyState(ScooterConnectionState state) {
