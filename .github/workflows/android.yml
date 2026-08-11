@@ -122,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Connection-state resynchronization hotfix on top of v0.12.2. A late pre-auth POWER/status callback can no longer downgrade an already authenticated BLE client from READY back to Connecting or Reconnecting. This closes the race where lock/unlock could already work while the dashboard and persistent notification still showed Reconnecting. The v0.12.2 reboot watchdog, discovery fallback, animated connection UI and offline control disabling are unchanged, as are G30 authentication, telemetry and lock/unlock protocol bytes.'
+          NOTES='Notification lifecycle resynchronization hotfix. Fixes a remaining case where the BLE repository could already be READY and lock/unlock worked while the foreground notification was still showing an old offline/reconnect snapshot. The service now distinguishes merely being alive from having a READY notification, accepts an explicit one-shot SYNC when needed, and can self-heal a live service whose foreground notification was stopped or stale. Reconnect state transitions remain immediate. v0.12.3 READY callback guards, v0.12.2 reboot/discovery fallback, G30 protocol bytes, ride statistics and charging logic are unchanged.'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_NAME" --clobber
             gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
