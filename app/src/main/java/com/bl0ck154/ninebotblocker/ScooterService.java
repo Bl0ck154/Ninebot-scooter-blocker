@@ -63,9 +63,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         @Override public void run() {
             if (!foregroundStarted || disconnectedSince == 0L || repository == null) return;
             ScooterRepository.Snapshot current = repository.snapshot();
-            boolean ready = current.connectionState == ScooterConnectionState.READY
-                    && current.telemetry.isConnected();
-            if (ready) {
+            if (isAuthenticated(current)) {
                 disconnectedSince = 0L;
                 return;
             }
@@ -136,9 +134,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         boolean commandAction = ACTION_TOGGLE.equals(action);
-        if (!commandAction && !ACTION_MONITOR.equals(action)
-                && (current.connectionState != ScooterConnectionState.READY
-                || !current.telemetry.isConnected())) {
+        if (!commandAction && !ACTION_MONITOR.equals(action) && !isAuthenticated(current)) {
             if (ACTION_START.equals(action)) repository.setPersistentEnabled(true);
             repository.connectIfNeeded();
             stopSelf();
@@ -147,8 +143,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
         startForeground(NOTIFICATION_ID, buildNotification(current));
         foregroundStarted = true;
-        boolean currentReady = current.connectionState == ScooterConnectionState.READY
-                && current.telemetry.isConnected();
+        boolean currentReady = isAuthenticated(current);
         hadReadyConnection = hadReadyConnection || currentReady;
 
         if (ACTION_TOGGLE.equals(action)) {
@@ -175,8 +170,11 @@ public final class ScooterService extends Service implements ScooterRepository.L
     @Override public void onSnapshot(ScooterRepository.Snapshot snapshot) {
         handleChargeAlert(snapshot);
 
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY
-                && snapshot.telemetry.isConnected();
+        // telemetry.connected is set only after auth/identity verification and cleared immediately
+        // on disconnect. Treat it as the authoritative user-visible readiness signal. This also
+        // self-heals the notification if a late intermediate connection-state callback ever leaves
+        // the enum on RECONNECTING after the authenticated BLE session is already usable.
+        boolean ready = isAuthenticated(snapshot);
         boolean recovered = ready && disconnectedSince != 0L;
         if (ready) {
             hadReadyConnection = true;
@@ -192,7 +190,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
         }
 
         // Telemetry churn is throttled, but a reconnect transition is user-visible state and
-        // should replace the stale red RECONNECT label immediately.
+        // should replace the stale red offline label immediately.
         if (foregroundStarted && ready) queueNotification(snapshot, recovered);
 
         if (transientAction && transientTarget != null
@@ -231,7 +229,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private Notification buildNotification(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
+        boolean ready = isAuthenticated(snapshot);
         String title = notificationTitle(snapshot);
         String text = notificationText(snapshot);
         String actionLabel = ready
@@ -292,19 +290,27 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private String notificationText(ScooterRepository.Snapshot snapshot) {
         ScooterTelemetry t = snapshot.telemetry;
-        boolean ready = snapshot.connectionState == ScooterConnectionState.READY && t.isConnected();
-        if (ready) {
+        if (isAuthenticated(snapshot)) {
             String speed = t.getSpeed() == null ? "— km/h"
                     : String.format(Locale.US, "%.1f km/h", t.getSpeed());
             return t.isCharging() ? "Charging · " + speed : speed + " · 🟢 Connected";
         }
-        if (snapshot.connectionState == ScooterConnectionState.RECONNECTING
-                || snapshot.connectionState == ScooterConnectionState.CONNECTING
-                || snapshot.connectionState == ScooterConnectionState.SCANNING
-                || snapshot.connectionState == ScooterConnectionState.CONNECTED) {
-            return "🔴 Reconnecting";
+        switch (snapshot.connectionState) {
+            case CONNECTING:
+                return "🟠 Connecting…";
+            case CONNECTED:
+                return "🟠 Authenticating…";
+            case SCANNING:
+                return "🟠 Searching for scooter…";
+            case RECONNECTING:
+                return "🔴 Disconnected · retrying…";
+            default:
+                return "🔴 Disconnected";
         }
-        return "🔴 Disconnected";
+    }
+
+    private static boolean isAuthenticated(ScooterRepository.Snapshot snapshot) {
+        return snapshot != null && snapshot.telemetry != null && snapshot.telemetry.isConnected();
     }
 
     private void handleChargeAlert(ScooterRepository.Snapshot snapshot) {
