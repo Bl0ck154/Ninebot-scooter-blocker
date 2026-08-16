@@ -482,8 +482,8 @@ public final class ScooterService extends Service implements ScooterRepository.L
                 ? new Notification.Builder(this, CHARGE_CHANNEL_ID)
                 : new Notification.Builder(this);
         builder.setSmallIcon(R.drawable.ic_shortcut_lock)
-                .setContentTitle("🔋 Scooter fully charged")
-                .setContentText(model + " reached 100%")
+                .setContentTitle("🔋 Charging complete")
+                .setContentText(model + " · 100%")
                 .setContentIntent(content)
                 .setAutoCancel(true)
                 .setCategory(Notification.CATEGORY_STATUS)
