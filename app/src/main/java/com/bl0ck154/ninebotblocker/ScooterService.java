@@ -32,6 +32,7 @@ public final class ScooterService extends Service implements ScooterRepository.L
     private static final int CHARGE_NOTIFICATION_ID = 15431;
     private static final long NOTIFICATION_THROTTLE_MS = 1500L;
     private static final long OFFLINE_NOTIFICATION_GRACE_MS = 30L * 60L * 1000L;
+    private static final long FULL_CHARGE_SESSION_GRACE_MS = 30_000L;
     private static final String SERVICE_PREFS = "scooter_service_state";
     private static final String PREF_OFFLINE_SINCE = "offline_since";
     private static final int SIGNAL_GREEN = 0xFF007E79;
@@ -55,7 +56,9 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private Integer lastBatteryPercent;
     private boolean chargeSessionObserved;
+    private boolean chargeProgressObserved;
     private boolean fullChargeAlertSent;
+    private long lastConfirmedChargingAt;
 
     private final Runnable notificationRunnable = () -> {
         ScooterRepository.Snapshot snapshot = pendingSnapshot;
@@ -404,28 +407,68 @@ public final class ScooterService extends Service implements ScooterRepository.L
 
     private void handleChargeAlert(ScooterRepository.Snapshot snapshot) {
         if (!snapshot.fullChargeAlert) {
-            lastBatteryPercent = null;
-            chargeSessionObserved = false;
-            fullChargeAlertSent = false;
+            resetChargeTracking();
             return;
         }
-        if (!snapshot.telemetry.isConnected()) return;
+        ScooterTelemetry telemetry = snapshot.telemetry;
+        if (telemetry == null || !telemetry.isConnected()) return;
 
-        Integer battery = snapshot.telemetry.getBatteryPercent();
+        Integer battery = telemetry.getBatteryPercent();
         if (battery == null) return;
+
+        long now = System.currentTimeMillis();
+        Double speed = telemetry.getSpeed();
+        Double current = telemetry.getBatteryCurrent();
+        boolean moving = speed != null && Math.abs(speed) >= ChargingDetector.CLEAR_MOVING_KMH;
+        boolean discharging = current != null && current < -ChargingDetector.START_CURRENT_A;
 
         if (battery <= 95) {
             fullChargeAlertSent = false;
-            chargeSessionObserved = false;
+            clearChargeSession();
         }
-        if (snapshot.telemetry.isCharging()) chargeSessionObserved = true;
-        if (lastBatteryPercent != null && battery > lastBatteryPercent) chargeSessionObserved = true;
 
-        if (battery >= 100 && chargeSessionObserved && !fullChargeAlertSent) {
+        // Riding or real discharge invalidates any previously observed charging session. This
+        // prevents a stale 99 -> 100 SOC update after unplugging from firing while on the road.
+        if (moving || discharging) clearChargeSession();
+
+        // Only the BMS/current-based detector is allowed to establish a charge session. A bare
+        // percentage increase is not enough: SOC can jump after reconnects or regenerative braking.
+        if (telemetry.isCharging()) {
+            chargeSessionObserved = true;
+            lastConfirmedChargingAt = now;
+        }
+
+        boolean recentCharge = chargeSessionObserved
+                && lastConfirmedChargingAt > 0L
+                && Math.max(0L, now - lastConfirmedChargingAt) <= FULL_CHARGE_SESSION_GRACE_MS;
+        if (chargeSessionObserved && !telemetry.isCharging() && !recentCharge) {
+            clearChargeSession();
+            recentCharge = false;
+        }
+
+        // Require observable SOC progress during the confirmed/recent charging session. This also
+        // means merely connecting to a scooter that already reports 100% cannot trigger an alert.
+        if (lastBatteryPercent != null && battery > lastBatteryPercent && recentCharge) {
+            chargeProgressObserved = true;
+        }
+
+        if (battery >= 100 && recentCharge && chargeProgressObserved && !fullChargeAlertSent) {
             fullChargeAlertSent = true;
             showFullChargeNotification(snapshot.modelName);
         }
         lastBatteryPercent = battery;
+    }
+
+    private void clearChargeSession() {
+        chargeSessionObserved = false;
+        chargeProgressObserved = false;
+        lastConfirmedChargingAt = 0L;
+    }
+
+    private void resetChargeTracking() {
+        lastBatteryPercent = null;
+        fullChargeAlertSent = false;
+        clearChargeSession();
     }
 
     private void showFullChargeNotification(String modelName) {
