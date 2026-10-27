@@ -2,373 +2,150 @@
 
 # 🛴 Ninebot Scooter Blocker
 
-### Lightweight Android companion for Ninebot / Segway scooters
+### Free Android app to lock, monitor and track your Ninebot scooter
 
-**Fast BLE reconnect · Live telemetry · Ride sessions · Activity calendar · One-tap lock · Persistent notification · Full-charge alert**
+**One-tap scooter lock · Auto-reconnect · Live battery and speed · Ride history · Charging alerts**
 
-[![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
-[![Release](https://img.shields.io/github/v/release/Bl0ck154/Ninebot-scooter-blocker?label=release)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
+An independent, open-source **Ninebot / Segway scooter companion** that connects directly over Bluetooth. No account, no cloud and no firmware flashing. **Hardware-tested on Ninebot Max G30.**
+
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
+[![Latest release](https://img.shields.io/github/v/release/Bl0ck154/Ninebot-scooter-blocker?label=latest%20APK)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
 [![Build](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml/badge.svg)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[**⬇️ Download latest APK**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
+### [⬇️ Download Android APK](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest) · [How to install](#get-started) · [Compatibility](#which-scooters-work)
+
+<img src="docs/assets/app-preview.svg" alt="Illustrated Ninebot Scooter Blocker dashboard and ride statistics screens. Sample values, not an actual screenshot." width="100%">
+
+*Illustrative UI overview with sample data — not screenshots from a device. [Real screenshot capture guide](docs/SCREENSHOT_GUIDE.md).*
 
 </div>
 
----
+## Why use it?
 
-## Why I built this
+The official scooter app is not always the fastest way to reach the controls you use every day. Ninebot Scooter Blocker is a **small, purpose-built Android companion** focused on quick access and continuity during rides and short stops.
 
-I made this app because I wanted two very simple things from my scooter that were awkward to get from the usual apps: **keep my own phone connected to the scooter in the background** and have a **fast software lock that is always one tap away**.
+| What you want | What this app does |
+| --- | --- |
+| 🔐 **Lock your scooter quickly** | One-tap **software lock / unlock** from the dashboard, notification or optional home shortcut |
+| 🔗 **Stay connected** | Remembers your scooter and attempts background **Bluetooth auto-reconnect** when it becomes available |
+| 🔋 **See live scooter status** | Battery, speed, estimated range, odometer, BLE signal and temperatures where supported |
+| 📍 **Remember your rides** | Movement-based sessions, 17-week riding activity calendar, day/week/month statistics and local JSON export |
+| 🔔 **Know when charging finishes** | Optional notification and phone chime when a monitored charge reaches 100% |
 
-### 🔗 Killer feature #1 — keep your own BLE connection alive
+Built for everyday riders and delivery/courier use — not for changing firmware, speed limits or motor parameters.
 
-With **Persistent connection** enabled, the app tries to keep the authenticated BLE connection to the remembered scooter alive and automatically reconnect when the scooter wakes up again.
+## Which scooters work?
 
-That is useful for more than just live telemetry. On the G30, the active control connection is normally occupied by one client at a time, so keeping your own phone connected also reduces the opportunity for another nearby phone/app to establish the control connection while yours is active.
+| Model / family | Support status |
+| --- | --- |
+| **Ninebot Max G30** | ✅ Hardware-tested baseline for BLE connection, telemetry and lock/unlock |
+| Other older Ninebot / Segway models | 🧪 Experimental; some may share a compatible protocol, but functionality is **not confirmed** |
+| Newer models with different encryption / protocols | ❓ Not verified; do not assume compatibility |
 
-This is **not a cryptographic anti-theft guarantee** and should not be treated as one. It is simply another useful layer on top of the scooter's normal behavior.
+**Important:** discoverable over Bluetooth does **not** mean compatible. If you test another scooter model, [open an issue](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) with the model and firmware information (never post serial numbers or BLE addresses).
 
-### 🔐 Killer feature #2 — software lock as a second layer
+## Get started
 
-The software lock is not supposed to make a scooter impossible to steal. Think of it as **additional protection / a deterrent**.
+1. Open [**Latest Releases**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest) and download the Android `.apk`.
+2. Install the APK on an **Android 8.0+** phone with Bluetooth LE.
+3. Grant Bluetooth permissions, then select your scooter once.
+4. Turn on **Auto connect** for faster reconnects.
+5. Enable **Persistent notification** for background connection and quick access to the lock action. Android 13+ also needs notification permission.
 
-When locked, the scooter cannot simply be ridden away normally and becomes much more awkward to move. That makes it useful together with a **physical lock**: even if somebody cuts or breaks the physical lock, they still cannot just jump on the scooter and ride away immediately. To somebody who does not know what happened, the scooter may simply look disabled or broken.
+> This project is distributed as a GitHub APK, not through Google Play. Download from this repository's official Releases page rather than an unknown APK mirror.
 
-For a very short stop — for example stepping into a shop for a couple of minutes while you stay nearby — the quick lock is also convenient because it removes the easiest theft scenario: someone casually riding away on an unlocked scooter.
+## Two features it was built for
 
-But there is an important limit: **software lock does not stop somebody from lifting the scooter, folding it, carrying it away or putting it into a car.** If the scooter is going to be left unattended, use a proper physical lock as well. This app is an extra layer, not a replacement for physical security.
+### 1. A scooter lock you can reach in one tap
 
-In short:
+The app uses the scooter's built-in software lock command on the hardware-tested G30. Useful during short stops and as **one additional deterrent** alongside a physical lock.
 
-**physical lock = stops easy removal**  
-**software lock = stops easy riding**  
-**persistent BLE = keeps your own control connection active**
+**It is not theft-proof.** Someone can still lift, carry or transport the scooter, and lock behavior depends on the scooter. Always use a suitable **physical lock** when leaving it unattended.
 
-Everything else in the app — telemetry, ride sessions, the activity calendar, charge alerts and statistics — grew around those two original ideas.
+### 2. A Bluetooth connection that tries to stay alive
 
----
+Enable the persistent connection so the phone can keep its authenticated BLE session active and reconnect after the scooter sleeps. On the tested G30, an active control connection can also reduce opportunities for competing nearby control sessions while it remains connected.
 
-## What is it?
+**This is not a security guarantee or a permanent anti-theft BLE barrier.** Android background restrictions, Bluetooth range and scooter power state still matter.
 
-**Ninebot Scooter Blocker** is a tiny daily-use Android companion built around the BLE/authentication implementation hardware-tested on the **Ninebot Max G30**.
+## Ride tracking without a cloud account
 
-It focuses on the things useful during everyday riding and courier work instead of becoming a firmware-tuning toolbox: reliable background BLE, live telemetry, quick software lock/unlock, a compact notification, charging alerts and persistent ride statistics.
+The app records sessions from scooter **movement and odometer changes**, not GPS. Short stops can remain in one session (20, 30 or 60 minute split), while longer inactivity starts a new ride. Browse a tappable **17-week activity calendar**, daily/weekly/monthly summaries and ride history.
 
-| | Feature |
-|---|---|
-| 🔗 | Automatic BLE connection to the remembered scooter |
-| 🔄 | Reconnect with battery-friendly backoff and stale-GATT protection |
-| 🔐 | One-tap software lock / unlock |
-| 🔋 | Battery %, voltage, current, power and charging detection |
-| 📶 | Live BLE signal strength / RSSI bars |
-| 🛞 | Live speed, odometer and estimated remaining range |
-| 📍 | Movement-based ride sessions that survive short stops and reconnects |
-| 📅 | Tappable 17-week GitHub-style distance activity calendar |
-| 📊 | Day / Week / Month summaries with date navigation and ride history |
-| 💾 | Local SQLite history with JSON statistics import / export |
-| 🌡️ | Controller and battery temperatures when available |
-| 🔔 | Persistent notification with current ride distance, signal and quick lock control |
-| 🔊 | Optional short double-beep when a monitored charge reaches 100% |
-| 🏠 | Home-screen lock shortcut |
-| ⚡ | No permanent wake lock and no aggressive continuous BLE scanning |
+Statistics are stored on your phone in a local database and can be exported/imported as JSON. There is **no GPS route map** and no cloud account requirement.
 
----
+## Frequently asked questions
 
-## ✨ Statistics at a glance
+<details>
+<summary><strong>Can I lock a Ninebot Max G30 from my Android phone?</strong></summary>
 
-The Statistics screen is built around a **GitHub-style activity calendar**. Every square is one day; heavier riding days get a stronger fill.
+Yes. Ninebot Scooter Blocker has hardware-tested software lock/unlock on the Ninebot Max G30 through an authenticated Bluetooth connection. It is a supplement to, not a replacement for, a physical lock.
 
-```text
-       recent 17 weeks →
-Mon   · ░ ░ ▒ ░ ▓ ▒ ░ · ░ █ ▓ ░ ▒ · ░ ▓
-Tue   ░ ▒ ░ ░ ▓ █ ░ · ░ ▒ ▓ ░ ░ █ ▒ ░ ▓
-Wed   · ░ ▒ ▓ ░ ▒ █ ░ · ░ ▒ ▓ ░ ▒ ░ █ ▓
-Thu   ░ ░ ░ ▒ ▓ ░ ▒ █ ░ · ░ ▓ ▒ ░ ░ ▒ █
-Fri   ▒ ▓ ░ ░ █ ▒ ░ ▓ ░ ▒ · ░ █ ▓ ▒ ░ ▓
-Sat   █ ▓ ▒ ░ ▒ █ ▓ ░ ░ ▒ ▓ █ ░ ▒ ▓ █ ░
-Sun   ▓ ░ · ░ ▒ ▓ █ ▒ ░ · ░ ▓ ▒ █ ░ ▒ ▓
+</details>
 
-      Less  ·  ░  ▒  ▓  █  More distance
-```
+<details>
+<summary><strong>Will it work on a Ninebot F2, G2, E-series or another Segway model?</strong></summary>
 
-Tap a day to inspect it. Switch between **Day / Week / Month**, move backward or forward through dates, and see distance, ride count, connected time, max speed, battery used/charged and the rides belonging to that period.
+These models have not been hardware-verified by this project. Different Ninebot / Segway generations may use incompatible authentication or telemetry protocols. Do not assume that Bluetooth discovery means lock/unlock will work.
 
-> The heatmap is relative to recent riding history, so it remains readable for both occasional rides and long courier shifts.
+</details>
 
-[**Read the full statistics documentation →**](docs/STATISTICS.md)
+<details>
+<summary><strong>Does it track location or require GPS?</strong></summary>
 
----
+No. Ride distance and sessions come from scooter telemetry and odometer deltas, not a GPS route tracker.
 
-## Quick start
+</details>
 
-1. Download the latest APK from [**Releases**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest).
-2. Install it on Android.
-3. Allow Bluetooth permissions.
-4. Select your scooter once.
-5. Leave **Auto connect** enabled.
-6. Enable **Persistent notification** if you want background connection, session continuity and quick lock control.
+<details>
+<summary><strong>Does it need internet, an account or a subscription?</strong></summary>
 
-> **Android 13+** requires notification permission for the live notification and full-charge alert.
+No account or subscription is needed. The app communicates with your scooter locally over Bluetooth and stores its ride statistics on your phone.
 
----
+</details>
 
-## Dashboard
+<details>
+<summary><strong>Will it reconnect while my phone is locked?</strong></summary>
 
-The compact dashboard shows:
+It can attempt background reconnection when the persistent notification/connection feature is enabled. Results depend on Android battery optimizations, Bluetooth range and scooter availability.
 
-- detected scooter/model and BLE state;
-- live BLE signal strength in bars and dBm;
-- battery percentage, voltage, current and power;
-- charging state when detected;
-- live speed;
-- **Session** distance tracked independently from the scooter's temporary trip counter;
-- remaining range and total odometer;
-- temperatures;
-- one large `🔐 LOCK` / `🔓 UNLOCK` button;
-- persistent notification, auto-connect and full-charge switches;
-- direct entry into the statistics screen.
+</details>
 
-Swipe left from the dashboard or tap **Statistics ›**. The Statistics screen uses normal native vertical scrolling; use the visible back control or Android back gesture/button to return.
+<details>
+<summary><strong>Can it unlock speed limits, flash firmware or tune motor power?</strong></summary>
 
----
+No. This is a daily-use monitoring, ride statistics and software-lock companion, not a firmware-tuning application.
 
-## Ride sessions
+</details>
 
-A ride is defined by **real movement**, not by Bluetooth uptime.
+<details>
+<summary><strong>Is this an official Segway / Ninebot app?</strong></summary>
 
-The app watches odometer deltas and speed. A session starts when movement is observed and remains open through short stops. If there is no real movement for the configured timeout, that ride closes automatically **even if BLE remains connected the entire time**.
+No. It is an independent open-source project, unaffiliated with Segway-Ninebot.
 
-Choose how long a short stop should still count as the same ride:
+</details>
 
-```text
-20 min · 30 min · 60 min
-```
+## Privacy and permissions
 
-That makes a quick shop/restaurant stop part of the same ride, while parking for several hours and riding again creates a new session automatically.
+The app does not need an account or cloud service. Android 12+ uses Bluetooth permissions; Android 13+ needs notification permission for the live status and charging alert. Older Android versions require location permission for legacy BLE scanning. The project does not request location permission on Android 12+.
 
-Distance is calculated from **total odometer deltas**, not the scooter's volatile trip register, so a scooter sleep/reconnect does not reset the app session. Fresh reconnect samples are treated as a baseline to avoid artificial distance jumps.
+## Technical details and development
 
-**End ride** closes a session immediately. **Continue previous** is available when two sessions should intentionally be joined.
+For protocol behavior, reconnect strategy, architecture, telemetry registers, database migration and build instructions, read the [technical reference](docs/TECHNICAL.md). See [ride statistics details](docs/STATISTICS.md), [contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md).
 
-Statistics are stored locally and separated by scooter serial number, with BLE MAC as the fallback identity.
-
----
-
-## Day / Week / Month history
-
-The redesigned Statistics screen provides:
-
-- **Day** — inspect one selected calendar day;
-- **Week** — Monday through Sunday around the selected date;
-- **Month** — the whole calendar month;
-- left/right date navigation;
-- period-specific ride lists;
-- distance, rides, connected time and max speed;
-- observed battery percentage used and charged;
-- a 17-week activity heatmap for fast visual browsing.
-
-Ride samples stay live in memory and are persisted in small batches rather than writing SQLite on every telemetry packet.
-
-**Export JSON** creates a portable local backup. **Import JSON** restores statistics without replacing scooter BLE settings.
-
----
-
-## Live notification
-
-The notification deliberately gives limited horizontal space to values useful while riding:
-
-```text
-🛴 73% · 12.4 km
-27.3 km/h · 🟢 Connected                 [ 🔐 LOCK ]
-```
-
-The distance is the app's current ride/session, not the scooter's temporary trip counter. BLE signal bars are also shown in the custom notification layout.
-
-If the scooter sleeps or disconnects, the current session value is retained while reconnecting:
-
-```text
-🛴 73% · 12.4 km
-🔴 Reconnecting                          [ ↻ RECONNECT ]
-```
-
-The disconnected notification remains available for the configured inactivity/grace window. A successful reconnect refreshes the notification immediately instead of waiting for the normal telemetry refresh throttle.
-
----
-
-## Charging & full-charge alert
-
-Charging detection uses sustained BMS current while the scooter is stationary instead of trusting one isolated current sample. This avoids treating short regenerative-braking current as a charge session.
-
-While charging, the UI/notification alternates a lightweight `🔋` / `⚡` indicator.
-
-Enable **Full-charge sound alert** to get a dedicated notification when an observed charge reaches 100%. The app plays a short, low-key double-beep from the phone notification audio stream and fires the alert once per observed charge session.
-
-Reliable background charge monitoring needs the foreground connection, so enabling the alert also keeps the persistent connection active.
-
----
-
-## Compatibility
-
-### ✅ Hardware-tested baseline
-
-**Ninebot Max G30**
-
-The known-working G30 BLE transport, SHU-compatible authentication and lock/unlock byte sequences are intentionally kept as the compatibility baseline.
-
-### 🧪 Experimental compatibility
-
-Discovery also accepts compatible Ninebot / Segway BLE devices instead of hard-coding one advertised name. Some older scooters share the same legacy Proto2 register family and may work with the current transport.
-
-This is **not SHU-level universal compatibility**. Newer families can use Encryption2/Encryption3 authentication, different board routing or different register layouts. A model is not claimed as tested until it is verified on hardware.
-
----
-
-## Telemetry
-
-| Value | Source / behavior |
-|---|---|
-| Battery % | ESC |
-| Voltage | BMS |
-| Current | BMS |
-| Power | calculated from voltage × current |
-| Charging | conservative stationary-current detector |
-| BLE signal | Android connected-GATT RSSI |
-| Speed | ESC |
-| Odometer | ESC |
-| Remaining range | ESC |
-| Controller temperature | ESC |
-| Battery temperature | BMS |
-| Lock state | read-only Ninebot status register |
-| App ride/session | persisted from movement + odometer deltas |
-
-Unsupported values stay empty instead of being fabricated. BLE writes and RSSI reads are serialized, and slower telemetry is interleaved with faster values.
-
----
-
-## BLE & reconnect behavior
-
-```text
-DISCONNECTED → SCANNING → CONNECTING → CONNECTED → READY
-                                      ↘ RECONNECTING / ERROR
-```
-
-Reconnect backoff:
-
-```text
-1 s → 2 s → 5 s → 10 s → 30 s
-```
-
-Most reconnect attempts use direct GATT to the remembered BLE address. Every third failed cycle can use an 8-second balanced scan fallback. Connection and scan generations protect a new session from late Android callbacks belonging to an old GATT/scan, and a watchdog resets stuck attempts.
-
-`READY` and user-visible state transitions are serialized on the main queue so an older Bluetooth callback cannot downgrade an already authenticated connection back to `CONNECTED` / `RECONNECTING`.
-
-Connected telemetry uses one small request per scheduler tick: roughly 1 request/second while stopped and up to 2/second while moving. RSSI is sampled much less frequently and uses the same serialized GATT path. There is no continuous BLE scan while connected.
-
----
-
-## Architecture
-
-```text
-ScooterBleManager
-       ↓
-NinebotBleClient
-       ↓
-   G30Protocol
-       ↓
-ScooterRepository ─── RideStatsTracker ─── RideStatsStore / SQLite
-      ↙   ↓   ↘                 ↓
-MainActivity  StatsActivity  ScooterService
-                  ↓
-           RideHeatmapView
-```
-
-- **`NinebotBleClient`** — Nordic UART GATT transport, crypto/authentication, fragmentation, RSSI reads and serialized writes.
-- **`ScooterBleManager`** — scanning and connection coordination with stale-callback generation guards.
-- **`G30Protocol`** — register knowledge and telemetry parsing.
-- **`ScooterRepository`** — connection, identity, reconnect, telemetry and commands.
-- **`RideStatsTracker` / `RideStatsStore`** — movement-based ride lifecycle and local statistics database.
-- **`RideHeatmapView`** — compact tappable 17-week distance calendar.
-- **`ScooterService`** — foreground lifetime, live notification and full-charge alert.
-- **`MainActivity` / `StatsActivity`** — presentation only; neither owns `BluetoothGatt`.
-
----
-
-## Statistics database
-
-Statistics schema v2 stores movement time separately from general telemetry activity. This fixes the old behavior where a parked scooter could keep one ride alive for hours simply because BLE remained connected.
-
-Legacy open v1 rides are closed once during migration so an old telemetry timestamp cannot silently merge into the next real ride.
-
-For implementation details, period semantics and backup behavior, see [**docs/STATISTICS.md**](docs/STATISTICS.md).
-
----
-
-## Android permissions
-
-- **Android 12+** — `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`
-- **Android 13+** — `POST_NOTIFICATIONS`
-- **Android 11 and older** — location only because legacy Android BLE scanning requires it
-- foreground connection uses the `connectedDevice` service type
-
-No location permission is requested on Android 12+.
-
----
-
-## Battery and size
-
-The project deliberately avoids heavyweight runtime dependencies: it uses Android framework Bluetooth, SQLite, JSON, drawing and UI APIs directly; JUnit exists only in the test configuration and is not packaged in the APK.
-
-Published APKs are **release builds**, optimized by R8 with code shrinking/obfuscation and Android resource shrinking. CI also builds a debug APK and reports debug vs release size so accidental binary growth is visible.
-
-Runtime work is kept small with no permanent wake lock, reconnect backoff, serialized GATT operations, adaptive polling, throttled notification refresh, batched statistics persistence and no endless aggressive scan.
-
----
-
-## What this project deliberately does NOT do
-
-It does not include firmware flashing, region/serial changing, motor power tuning or speed-limit modification. Telemetry requests are read-only; lock/unlock uses the existing working scooter command path.
-
----
-
-## Build
-
-Requirements: **JDK 17 · Android SDK 35 · Gradle 8.9**
+**Build:** JDK 17 · Android SDK 35 · Gradle 8.9.
 
 ```bash
 gradle :app:assembleDebug
-gradle :app:assembleRelease
 ```
 
-Pull requests run release lint, unit tests, and debug + optimized release builds without access to signing secrets. Every push to `main` additionally verifies the official signature, uploads the signed APK artifact, and publishes the GitHub Release.
+## Feedback and license
 
-The signing keystore is intentionally not stored in this repository. Official APKs are signed in GitHub Actions using an encrypted repository secret. Local builds use the standard Android debug signing behavior unless a private keystore is configured.
+Found a problem or verified another model? [Report an issue](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) with the app version, scooter model and firmware — no private scooter identifiers. Focused contributions are welcome.
 
----
-
-## Protocol references
-
-- [Ninebot-PROTOCOL](https://github.com/ub4raf/Ninebot-PROTOCOL)
-- [py9b](https://github.com/etransport/py9b)
-- [ninebot-ble](https://github.com/ownbee/ninebot-ble)
-- [M365-Rokid-HUD](https://github.com/zero2005x/M365-Rokid-HUD) — Android architecture reference
-- [Segway / Ninebot BLE documentation](https://nootnooot.codeberg.page/segway-ninebot-ble/)
-
-The project's own working G30 implementation remains the primary compatibility source.
+Distributed under the [MIT License](LICENSE). Segway and Ninebot trademarks belong to their respective owners.
 
 ---
 
-## Contributing and security
-
-Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. Please report security-sensitive issues privately as described in [SECURITY.md](SECURITY.md).
-
-## License
-
-Licensed under the [MIT License](LICENSE).
-
----
-
-<div align="center">
-
-**Connect · monitor · lock · ride · remember the shift.**
-
-</div>
+<div align="center"><strong>Connect · monitor · lock · ride.</strong></div>
