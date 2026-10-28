@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071d25">
+  <meta name="description" content="Free, open-source Android companion for Ninebot Max G30: quick software lock, persistent Bluetooth reconnect, battery and charging notification, and local ride statistics. Tested on one G30.">
+  <meta name="robots" content="index,follow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Ninebot Scooter Blocker — Free Android companion for Ninebot Max G30">
+  <meta property="og:description" content="One-tap lock, live battery notification, BLE auto-reconnect and local ride history. Open-source and independently tested on a Ninebot Max G30.">
+  <meta name="twitter:card" content="summary">
+  <title>Ninebot Scooter Blocker — Free Android App for Ninebot Max G30</title>
+  <script type="application/ld+json">{
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Ninebot Scooter Blocker",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Android 8.0 or later",
+    "description": "Independent open-source Android Bluetooth companion for Ninebot Max G30, with software lock, live notification, auto reconnect, charging alerts and local ride statistics.",
+    "downloadUrl": "https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest",
+    "url": "https://github.com/Bl0ck154/Ninebot-scooter-blocker",
+    "author": {"@type": "Person", "name": "Bl0ck154", "url": "https://github.com/Bl0ck154"},
+    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+  }</script>
+  <style>
+    :root{color-scheme:dark;--bg:#071d25;--text:#f3ffff;--muted:#b1cbd0;--accent:#42dec9;--line:#2a505a;--surface:#102b34;--soft:#193f47}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}
+    body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.65}
+    a{color:var(--accent)}a:hover{text-decoration:none}a:focus-visible{outline:3px solid #b9fff0;outline-offset:3px}
+    .container{width:min(1080px,calc(100% - 36px));margin:0 auto}
+    nav{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:22px 0;flex-wrap:wrap}
+    nav strong{font-size:1.05rem}nav div{display:flex;gap:16px;flex-wrap:wrap}nav a{color:var(--muted);text-decoration:none;font-size:.92rem}
+    .hero{padding:48px 0 28px;text-align:center}
+    .eyebrow{color:var(--accent);text-transform:uppercase;letter-spacing:.15em;font-size:.8rem;font-weight:800}
+    h1{font-size:clamp(2.3rem,5.5vw,4.4rem);line-height:1.12;letter-spacing:-.045em;margin:15px auto;max-width:950px}
+    h2{font-size:clamp(1.6rem,3.2vw,2.2rem);line-height:1.2;letter-spacing:-.025em;margin:0 0 18px}
+    h3{font-size:1.12rem;line-height:1.3;margin:0 0 10px}
+    .lead{font-size:clamp(1rem,2vw,1.22rem);color:var(--muted);max-width:760px;margin:0 auto 25px}
+    .actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:26px 0}
+    .button{display:inline-flex;align-items:center;justify-content:center;padding:13px 22px;border-radius:12px;font-weight:750;text-decoration:none;border:1px solid #50988f;min-height:48px}
+    .primary{background:var(--accent);color:#05232a;border-color:var(--accent)}
+    .secondary{color:var(--text);background:var(--surface)}
+    .note{color:var(--muted);font-size:.9rem}
+    figure{margin:28px auto 0;max-width:1080px}figure img{width:100%;display:block;border:1px solid var(--line);border-radius:20px}figcaption{color:var(--muted);font-size:.8rem;margin:9px 0;text-align:center}
+    section{padding:62px 0}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+    .card{padding:25px;border:1px solid var(--line);background:var(--surface);border-radius:16px}
+    .card p{color:var(--muted);margin:0}.card .emoji{font-size:1.6rem;display:block;margin-bottom:12px}
+    .detail{background:#0d2630;border-block:1px solid var(--line)}
+    .cols{display:grid;grid-template-columns:1.15fr 1fr;gap:38px;align-items:start}
+    p{margin:0 0 16px}ul{padding-left:20px;color:var(--muted)}
+    .pill{display:inline-block;background:var(--soft);border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:.81rem;color:var(--accent);font-weight:700}
+    .warning{padding:18px;border:1px solid #b28c56;background:#382e25;border-radius:13px;color:#ffe8c4}
+    .notification{padding:20px;border:1px solid #2b665f;border-radius:14px;background:#133941;font-size:1.05rem}
+    .notification small{color:var(--muted);display:block}.fakebutton{float:right;border:1px solid var(--accent);color:var(--accent);border-radius:9px;padding:3px 8px;font-size:.8rem}
+    details{border-bottom:1px solid var(--line);padding:16px 0}summary{font-weight:700;cursor:pointer}details p{margin:11px 0 0;color:var(--muted)}
+    footer{border-top:1px solid var(--line);padding:30px 0;color:var(--muted);font-size:.88rem}
+    @media(max-width:780px){.grid{grid-template-columns:1fr 1fr}.cols{grid-template-columns:1fr}.hero{padding-top:26px}}
+    @media(max-width:520px){.grid{grid-template-columns:1fr}.container{width:min(100% - 28px,1080px)}section{padding:42px 0}.fakebutton{float:none;margin-top:8px;display:inline-block}}
+  </style>
+</head>
+<body>
+<div class="container">
+  <nav aria-label="Main navigation">
+    <strong>🛴 Ninebot Scooter Blocker</strong>
+    <div><a href="#features">Features</a><a href="#compatibility">Compatibility</a><a href="#faq">FAQ</a><a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker">Source on GitHub</a></div>
+  </nav>
+  <header class="hero">
+    <div class="eyebrow">Free · Open source · Android 8.0+</div>
+    <h1>Your Ninebot Max G30, one tap away.</h1>
+    <p class="lead">A small Android companion built by a G30 owner: quick software lock, persistent Bluetooth reconnection, live battery and charging notification, and ride statistics stored on your phone.</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest">Download Android APK ↗</a>
+      <a class="button secondary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker">View open-source code ↗</a>
+    </div>
+    <p class="note">No account, cloud, subscription or firmware flashing. Hardware-tested on one Ninebot Max G30.</p>
+    <figure>
+      <img src="assets/app-preview.svg" alt="Illustrative overview showing the battery and software lock dashboard alongside a ride activity calendar on Android phones" width="1200" height="620">
+      <figcaption>Illustrative app overview with sample values, not actual screenshots from a device.</figcaption>
+    </figure>
+  </header>
+</div>
+<main>
+  <section id="features" class="container">
+    <h2>The things you use every day</h2>
+    <div class="grid">
+      <article class="card"><span class="emoji" aria-hidden="true">🔐</span><h3>One-tap software lock</h3><p>Lock or unlock the tested G30 from the app or notification, without digging through menus.</p></article>
+      <article class="card"><span class="emoji" aria-hidden="true">🔗</span><h3>Persistent BLE connection</h3><p>Keeps trying to maintain your own authenticated Bluetooth session and reconnect when possible.</p></article>
+      <article class="card"><span class="emoji" aria-hidden="true">🔋</span><h3>Live Android notification</h3><p>Battery %, speed, session distance, connection status, charging indication and lock controls.</p></article>
+      <article class="card"><span class="emoji" aria-hidden="true">🚶</span><h3>Last battery reading</h3><p>After disconnecting, the notification can keep the last known battery reading visible for up to 30 minutes.</p></article>
+      <article class="card"><span class="emoji" aria-hidden="true">📊</span><h3>Ride calendar</h3><p>Local ride sessions, a 17-week activity calendar and day/week/month statistics with JSON backups.</p></article>
+      <article class="card"><span class="emoji" aria-hidden="true">🔔</span><h3>Full-charge alert</h3><p>Optional phone chime when the battery reaches 100% during an actively monitored charge.</p></article>
+    </div>
+  </section>
+  <section class="detail">
+    <div class="container cols">
+      <div>
+        <span class="pill">The everyday shortcut</span>
+        <h2 style="margin-top:15px">Your scooter status without opening the app</h2>
+        <p>The lock button is directly in the Android notification while connected. If you walk away and Bluetooth drops, the notification changes to <b>RECONNECT</b> and retains the <b>last known battery percentage</b> for up to 30 minutes — useful for a quick check when you've left the scooter behind.</p>
+        <p class="note">The disconnected reading is historical, not live. Android background behavior varies by device.</p>
+      </div>
+      <div>
+        <div class="notification" aria-label="Illustrative notification example">
+          <b>🛴 73% · 12.4 km</b>
+          <small>27.3 km/h · 🟢 Connected</small>
+          <span class="fakebutton">🔐 LOCK</span>
+        </div>
+        <p class="note" style="margin-top:12px">Example layout and values — illustration, not a screenshot.</p>
+        <div class="notification" aria-label="Illustrative disconnected notification">
+          <b>🛴 73% · 12.4 km</b>
+          <small>🔴 Reconnecting</small>
+          <span class="fakebutton">↻ RECONNECT</span>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="container cols" id="compatibility">
+    <div>
+      <span class="pill">Honest compatibility</span>
+      <h2 style="margin-top:15px">Made for Ninebot Max fans</h2>
+      <p>The app was created and tested using <b>one personally owned Ninebot Max G30</b>. Other models are <b>not verified</b>, and switching among different scooters hasn't been thoroughly tested.</p>
+      <p>Have another Ninebot or Segway model? <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new/choose">Share a hardware test report</a> or <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls">send a pull request</a>. Help from other owners is very welcome.</p>
+    </div>
+    <div class="warning"><b>Not an anti-theft guarantee.</b><p style="margin-top:9px;margin-bottom:0">The built-in software lock adds some friction against opportunistic ride-offs, but someone could still carry your scooter away. An active BLE connection may make competing control connections harder while it lasts, but it cannot guarantee protection. Always use a physical lock when leaving the scooter unattended.</p></div>
+  </section>
+  <section class="detail" id="faq">
+    <div class="container">
+      <h2>Frequently asked questions</h2>
+      <details><summary>Does the app work on Ninebot Max G2, G3, F2 or E-series?</summary><p>Not verified. The hardware-tested baseline is one Ninebot Max G30; different models and firmware generations may use incompatible protocols.</p></details>
+      <details><summary>Can I lock my G30 without opening the app?</summary><p>Yes, while the phone is connected, use the LOCK / UNLOCK action in the persistent Android notification.</p></details>
+      <details><summary>Is the scooter protected from theft?</summary><p>No. Software lock and a maintained Bluetooth session are secondary deterrents, not substitutes for a physical lock.</p></details>
+      <details><summary>Does the notification stay visible when Bluetooth disconnects?</summary><p>It can show the last known battery and ride distance for up to 30 minutes after disconnection, with RECONNECT available. It is not a live remote measurement.</p></details>
+      <details><summary>Does the app require Google Play, a cloud account or GPS?</summary><p>No. Download the APK from official GitHub Releases. The app communicates over Bluetooth and stores ride history locally, without GPS route recording.</p></details>
+      <details><summary>Is this made by Segway-Ninebot?</summary><p>No. This is an independent community project and is not affiliated with Segway-Ninebot.</p></details>
+    </div>
+  </section>
+  <section class="container" style="text-align:center">
+    <h2>Ready to try it on your G30?</h2>
+    <p class="lead">Download the latest official APK or inspect the source code first. Feedback and verified compatibility reports are welcome.</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest">Download latest APK ↗</a>
+      <a class="button secondary" href="INSTALL.html" style="display:none">Installation</a>
+      <a class="button secondary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/blob/main/docs/INSTALL.md">Installation guide ↗</a>
+    </div>
+  </section>
+</main>
+<footer><div class="container">Ninebot Scooter Blocker · Independent open-source Android app · <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker">GitHub</a> · <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/blob/main/LICENSE">MIT License</a> · Segway and Ninebot are trademarks of their respective owners.</div></footer>
+</body>
+</html>
