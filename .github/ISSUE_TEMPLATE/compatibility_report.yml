@@ -1,0 +1,95 @@
+name: "Scooter compatibility report"
+description: "Help verify whether Ninebot Scooter Blocker works with your Ninebot or Segway model (including partial/failed tests)."
+title: "[Compatibility] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping test another model! **Ninebot Max G30 is the only hardware-tested baseline.** Reports about partial connections and failures are welcome. 
+        Never include scooter serial numbers, Bluetooth MAC addresses, saved pairing credentials, private locations or raw unredacted logs.
+        **No control tests while riding.** Use only a scooter you own or are authorized to operate.
+  - type: input
+    id: model
+    attributes:
+      label: Exact scooter model
+      placeholder: "e.g. Ninebot Max G30LP, G30D, F40, ES2, Max G2"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Scooter firmware (optional)
+      description: "Only version numbers; no serial numbers or keys."
+      placeholder: "e.g. DRV/BLE/BMS firmware versions, if known"
+  - type: input
+    id: phone
+    attributes:
+      label: Android phone and version
+      placeholder: "e.g. Pixel 7 / Android 16"
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: Ninebot Scooter Blocker version
+      placeholder: "e.g. v0.12.6"
+    validations:
+      required: true
+  - type: dropdown
+    id: discovered
+    attributes:
+      label: Bluetooth discovery
+      options:
+        - Not tested
+        - Found in the scooter picker
+        - Not found in the scooter picker
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection and authentication
+      options:
+        - Not tested
+        - Connected and authenticated (READY)
+        - Device found but authentication failed
+        - Failed to connect at all
+        - Connection drops or reconnects repeatedly
+    validations:
+      required: true
+  - type: dropdown
+    id: telemetry
+    attributes:
+      label: Read-only telemetry (battery, speed, distance)
+      options:
+        - Not tested
+        - Values appear correct
+        - Only some values work
+        - Values missing or obviously incorrect
+    validations:
+      required: true
+  - type: dropdown
+    id: locking
+    attributes:
+      label: Software lock/unlock — optional safety-sensitive test
+      description: "Do not test while riding or in traffic. A report without lock testing is just as useful."
+      options:
+        - Not tested
+        - Both lock and unlock worked while stationary
+        - Only one action worked while stationary
+        - Neither action worked while stationary
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened?
+      description: "Any useful steps, differences from the official app, or additional observations."
+      placeholder: "The app detected the scooter, but the connection stopped at Authenticating..."
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Safety and privacy
+      options:
+        - label: "I removed serial numbers, MAC addresses, passwords/keys, personal location data and other identifiers."
+          required: true
+        - label: "Any scooter control tests were on my own/authorized stationary scooter, never during a ride."
+          required: true
