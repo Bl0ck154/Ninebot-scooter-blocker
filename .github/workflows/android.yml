@@ -61,7 +61,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
@@ -122,13 +122,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$VERSION_NAME"
-          NOTES='Full-charge alert reliability fix. A 100% notification now requires a confirmed BMS charging session plus real battery percentage progress; riding, active discharge, reconnect SOC jumps, and regenerative-braking changes can no longer arm the alert. A short taper grace keeps the final 100% update reliable near charge completion. The alert text is also simplified to "Charging complete" with the scooter model and 100%. Version bumped to v0.12.6 so this build is clearly distinguishable from v0.12.5.'
+          # A released version is immutable. Documentation-only pushes must not
+          # silently replace the APK or retarget an existing release.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK_NAME" --clobber
-            gh release edit "$TAG" --target "${GITHUB_SHA}" --notes "$NOTES"
+            echo "Release $TAG already exists; keeping its APK and notes unchanged."
           else
             gh release create "$TAG" "$APK_NAME" \
               --target "${GITHUB_SHA}" \
               --title "Ninebot Scooter Blocker $TAG" \
-              --notes "$NOTES"
+              --generate-notes
           fi
