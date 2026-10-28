@@ -2,13 +2,13 @@
 
 # 🛴 Ninebot Scooter Blocker
 
-### Free Android companion for Ninebot Max G30 owners — lock, monitor and track your rides
+### Free Android companion for Ninebot / Segway scooters — tested on Max G30
 
 **One-tap software lock · Persistent Bluetooth connection · Live notification · Ride history · Charge alerts**
 
-Made by a **Ninebot Max G30 owner, for other Ninebot Max enthusiasts** who want a handy lock button and scooter information within reach. Independent, free and open source. Connects directly via Bluetooth, with no account, cloud or firmware flashing.
+Built by a **Ninebot Max G30 owner** for riders who want a quick software lock, useful live notification and ride history without opening a full scooter app. Independent, free and open source. Connects directly via Bluetooth, with no account, cloud or firmware flashing.
 
-**Developed and hardware-tested with one personally owned Ninebot Max G30.** Other models and switching between different scooters need more testing.
+**✅ Tested on one Ninebot Max G30 · 🧪 Other Ninebot / Segway models: community testers wanted.** Some related models might work, but none are verified yet. Even a report that a model *doesn't* connect is useful.
 
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Latest release](https://img.shields.io/github/v/release/Bl0ck154/Ninebot-scooter-blocker?label=latest%20APK)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
@@ -29,7 +29,7 @@ I wanted something simple for my own **Ninebot Max G30**: keep my phone connecte
 
 Imagine leaving your scooter for a quick stop. You can **lock it directly from the Android notification** before putting your phone away. While riding, the same notification shows battery level, ride distance, speed and connection status. When charging, it shows the charging state too. No need to keep switching back to the app.
 
-This isn't a complex tuning tool. It's a small, practical companion for people who use and enjoy their Ninebot Max every day.
+This isn't a complex tuning tool. It's a small, practical companion for everyday riding — originally built around the Ninebot Max G30, with the hope of learning which other Ninebot / Segway models can work too.
 
 | Everyday need | What the app provides |
 | --- | --- |
@@ -42,19 +42,22 @@ This isn't a complex tuning tool. It's a small, practical companion for people w
 
 Built for everyday riding and courier work — not for flashing firmware, changing speed limits or tuning motor power.
 
-## Which scooters work?
+## Will it work with your Ninebot / Segway?
 
-| Model / family | Support status |
+**Have another Ninebot or Segway scooter? I'd love your help finding out.** Device discovery accepts several Ninebot/Segway Bluetooth naming patterns, but detecting a device is not proof that its authentication, telemetry or software lock commands are compatible.
+
+| Scooter models | Current status |
 | --- | --- |
-| **Ninebot Max G30** | ✅ Developed and tested with **one personally owned G30** for BLE connection, telemetry and lock/unlock |
-| Other older Ninebot / Segway models | 🧪 Experimental; some may share a compatible protocol, but functionality is **not confirmed** |
-| Newer models with different encryption / protocols | ❓ Not verified; do not assume compatibility |
+| **Ninebot Max G30** | ✅ **Hardware-tested** on my single personally owned scooter: BLE connection, telemetry, lock/unlock |
+| **G30-family variants** (for example G30LP, G30D, G30E) | 🧪 **Not tested by this project** — especially interesting candidates for community reports, not promised to work |
+| **ES / E / F and other Ninebot / Segway series** | 🧪 **Not tested** — different protocols and firmware may need code changes |
+| **Max G2 / G3, F2 and newer families** | 🧪 **Not tested** — some use different authentication/encryption or register layouts; do not assume compatibility |
 
-**This is a one-scooter project so far.** I've tested it on my own Ninebot Max G30, not across a fleet of devices. In particular, **changing between different scooters and reconnecting after switching devices has not been thoroughly tested**. The app lets you select/change a remembered scooter, but I don't want to overpromise how it behaves with combinations I haven't tried.
+**Even partial test results are valuable:** Can the app discover your scooter? Can it authenticate? Does battery percentage or speed show correctly? Where does it fail? You don't need to test lock/unlock to contribute a useful report.
 
-I'd love to improve compatibility with other Ninebot / Segway models if owners can help test, share sanitized diagnostics or contribute code. **[Issues](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) and [pull requests](https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls) are very welcome.** Please include the exact model and firmware, but never publish serial numbers or BLE addresses.
+**[🧪 Report your model's compatibility](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new?template=compatibility_report.yml)** · [Read the safe testing guide](docs/COMPATIBILITY.md) · [Contribute a fix](https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls)
 
-**Important:** a scooter appearing in the Bluetooth scan does **not** prove that locking, authentication or telemetry works on it. [See the detailed compatibility and community testing guide](docs/COMPATIBILITY.md).
+This is still a **one-scooter-tested project**. Switching between different scooters and reconnecting after switching devices have not been thoroughly tested. Please never share serial numbers or BLE MAC addresses in public reports. Only test controls on a scooter you own or are authorized to operate, while safely stationary.
 
 ## Get started
 
@@ -120,9 +123,9 @@ Yes. Ninebot Scooter Blocker has hardware-tested software lock/unlock on the Nin
 </details>
 
 <details>
-<summary><strong>Will it work on a Ninebot F2, G2, E-series or another Segway model?</strong></summary>
+<summary><strong>Could this work with a Ninebot G30LP, G30D, G2, F2, ES or another Segway scooter?</strong></summary>
 
-These models have not been hardware-verified by this project. Different Ninebot / Segway generations may use incompatible authentication or telemetry protocols. Do not assume that Bluetooth discovery means lock/unlock will work.
+Possibly — but **none of those models has been verified with this app**. G30-related variants are especially interesting to test, while other models may need different authentication or telemetry implementations. Seeing a scooter in the scan does not prove compatibility. If you own another model, [share a partial or complete test report](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new?template=compatibility_report.yml).
 
 </details>
 
@@ -196,11 +199,11 @@ For protocol behavior, reconnect strategy, architecture, telemetry registers, da
 gradle :app:assembleDebug
 ```
 
-## Made for Ninebot Max fans — contributions welcome
+## Built on G30, open to the Ninebot / Segway community
 
 I built this app for my own Ninebot Max G30 and decided to share it with other riders. It's an independent hobby project, not a universal scooter controller or a commercial anti-theft product.
 
-If you own a different Ninebot / Segway scooter and want to help add support, or you've found a bug when **switching scooters or reconnecting**, please [open an issue](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) or [send a pull request](https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls). Real-device test results, compatibility notes and focused fixes help far more than guesses.
+**Own any Ninebot / Segway model?** [Submit a compatibility test report](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new?template=compatibility_report.yml), even if the app only discovers your scooter or cannot connect. If you've found a bug when **switching scooters or reconnecting**, please [open an issue](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) or [send a pull request](https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls). Real-device results, compatibility notes and focused fixes help far more than guesses.
 
 Please include the app version, scooter model and firmware where useful, but **remove serial numbers, BLE addresses and other private identifiers** from logs or screenshots.
 
