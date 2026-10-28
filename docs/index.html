@@ -4,20 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#071d25">
-  <meta name="description" content="Free, open-source Android companion for Ninebot Max G30: quick software lock, persistent Bluetooth reconnect, battery and charging notification, and local ride statistics. Tested on one G30.">
+  <meta name="description" content="Free Android companion for Ninebot / Segway owners: quick lock, persistent Bluetooth, battery notification and ride tracking. Tested on Ninebot Max G30; other models need volunteer testing.">
   <meta name="robots" content="index,follow">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Ninebot Scooter Blocker — Free Android companion for Ninebot Max G30">
-  <meta property="og:description" content="One-tap lock, live battery notification, BLE auto-reconnect and local ride history. Open-source and independently tested on a Ninebot Max G30.">
+  <meta property="og:title" content="Ninebot Scooter Blocker — Android App for Ninebot / Segway Owners">
+  <meta property="og:description" content="Free open-source Android scooter companion. Tested on one Ninebot Max G30; community compatibility testing welcome for other Ninebot / Segway models.">
   <meta name="twitter:card" content="summary">
-  <title>Ninebot Scooter Blocker — Free Android App for Ninebot Max G30</title>
+  <title>Ninebot Scooter Blocker — Android Companion for Ninebot / Segway Scooters</title>
   <script type="application/ld+json">{
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Ninebot Scooter Blocker",
     "applicationCategory": "UtilitiesApplication",
     "operatingSystem": "Android 8.0 or later",
-    "description": "Independent open-source Android Bluetooth companion for Ninebot Max G30, with software lock, live notification, auto reconnect, charging alerts and local ride statistics.",
+    "description": "Independent open-source Android Bluetooth companion built for Ninebot Max G30, with software lock, live notification, reconnect and ride statistics. Compatibility with other Ninebot/Segway models is unverified and open for testing.",
     "downloadUrl": "https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest",
     "url": "https://github.com/Bl0ck154/Ninebot-scooter-blocker",
     "author": {"@type": "Person", "name": "Bl0ck154", "url": "https://github.com/Bl0ck154"},
@@ -68,13 +68,13 @@
   </nav>
   <header class="hero">
     <div class="eyebrow">Free · Open source · Android 8.0+</div>
-    <h1>Your Ninebot Max G30, one tap away.</h1>
-    <p class="lead">A small Android companion built by a G30 owner: quick software lock, persistent Bluetooth reconnection, live battery and charging notification, and ride statistics stored on your phone.</p>
+    <h1>A handy Android companion for your Ninebot / Segway.</h1>
+    <p class="lead">Built by a Ninebot Max G30 owner: quick software lock, persistent Bluetooth reconnection, live battery and charging notification, and ride history stored on your phone. Have another Ninebot / Segway scooter? Help us test compatibility.</p>
     <div class="actions">
       <a class="button primary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest">Download Android APK ↗</a>
       <a class="button secondary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker">View open-source code ↗</a>
     </div>
-    <p class="note">No account, cloud, subscription or firmware flashing. Hardware-tested on one Ninebot Max G30.</p>
+    <p class="note"><b>Tested on one Ninebot Max G30 only.</b> Other models are unverified and may require code changes. No account, cloud, subscription or firmware flashing.</p>
     <figure>
       <img src="assets/app-preview.svg" alt="Illustrative overview showing the battery and software lock dashboard alongside a ride activity calendar on Android phones" width="1200" height="620">
       <figcaption>Illustrative app overview with sample values, not actual screenshots from a device.</figcaption>
@@ -119,16 +119,16 @@
   <section class="container cols" id="compatibility">
     <div>
       <span class="pill">Honest compatibility</span>
-      <h2 style="margin-top:15px">Made for Ninebot Max fans</h2>
-      <p>The app was created and tested using <b>one personally owned Ninebot Max G30</b>. Other models are <b>not verified</b>, and switching among different scooters hasn't been thoroughly tested.</p>
-      <p>Have another Ninebot or Segway model? <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new/choose">Share a hardware test report</a> or <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls">send a pull request</a>. Help from other owners is very welcome.</p>
+      <h2 style="margin-top:15px">G30-tested. Other Ninebot / Segway owners welcome.</h2>
+      <p>The app was created and tested using <b>one personally owned Ninebot Max G30</b>. <b>G30-family variants (G30LP, G30D, G30E), ES/E/F models, G2, G3, F2 and other Ninebot / Segway scooters are NOT verified</b>. They may connect fully, partially or not at all. Switching among different scooters also needs testing.</p>
+      <p><b>Even a failed connection report is helpful.</b> <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new?template=compatibility_report.yml">Report which steps work on your model</a> or <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls">send a pull request</a>. You do not need to try lock/unlock to participate.</p>
     </div>
     <div class="warning"><b>Not an anti-theft guarantee.</b><p style="margin-top:9px;margin-bottom:0">The built-in software lock adds some friction against opportunistic ride-offs, but someone could still carry your scooter away. An active BLE connection may make competing control connections harder while it lasts, but it cannot guarantee protection. Always use a physical lock when leaving the scooter unattended.</p></div>
   </section>
   <section class="detail" id="faq">
     <div class="container">
       <h2>Frequently asked questions</h2>
-      <details><summary>Does the app work on Ninebot Max G2, G3, F2 or E-series?</summary><p>Not verified. The hardware-tested baseline is one Ninebot Max G30; different models and firmware generations may use incompatible protocols.</p></details>
+      <details><summary>Could it work with Ninebot G30LP, G30D, G2, G3, F2 or E/ES-series?</summary><p>Possibly, but none of those models are verified in this project. Bluetooth scanning may see a scooter even if its protocol is incompatible. Owners of other Ninebot / Segway models can <a href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues/new?template=compatibility_report.yml">send a test report</a> — partial and failed results help too.</p></details>
       <details><summary>Can I lock my G30 without opening the app?</summary><p>Yes, while the phone is connected, use the LOCK / UNLOCK action in the persistent Android notification.</p></details>
       <details><summary>Is the scooter protected from theft?</summary><p>No. Software lock and a maintained Bluetooth session are secondary deterrents, not substitutes for a physical lock.</p></details>
       <details><summary>Does the notification stay visible when Bluetooth disconnects?</summary><p>It can show the last known battery and ride distance for up to 30 minutes after disconnection, with RECONNECT available. It is not a live remote measurement.</p></details>
@@ -138,7 +138,7 @@
   </section>
   <section class="container" style="text-align:center">
     <h2>Ready to try it on your G30?</h2>
-    <p class="lead">Download the latest official APK or inspect the source code first. Feedback and verified compatibility reports are welcome.</p>
+    <p class="lead">Download the official APK for your G30, inspect the open-source code, or help check what works on other Ninebot / Segway models. Compatibility is not guaranteed outside the tested G30.</p>
     <div class="actions">
       <a class="button primary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest">Download latest APK ↗</a>
       <a class="button secondary" href="https://github.com/Bl0ck154/Ninebot-scooter-blocker/blob/main/docs/INSTALL.md">Installation guide ↗</a>
