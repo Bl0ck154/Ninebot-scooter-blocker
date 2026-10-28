@@ -15,7 +15,7 @@ Made by a **Ninebot Max G30 owner, for other Ninebot Max enthusiasts** who want 
 [![Build](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml/badge.svg)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-### [⬇️ Download Android APK](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest) · [How to install](#get-started) · [Compatibility](#which-scooters-work)
+### [⬇️ Download Android APK](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest) · [Installation guide](docs/INSTALL.md) · [Compatibility](docs/COMPATIBILITY.md)
 
 <img src="docs/assets/app-preview.svg" alt="Illustrated Ninebot Scooter Blocker dashboard and ride statistics screens. Sample values, not an actual screenshot." width="100%">
 
@@ -54,7 +54,7 @@ Built for everyday riding and courier work — not for flashing firmware, changi
 
 I'd love to improve compatibility with other Ninebot / Segway models if owners can help test, share sanitized diagnostics or contribute code. **[Issues](https://github.com/Bl0ck154/Ninebot-scooter-blocker/issues) and [pull requests](https://github.com/Bl0ck154/Ninebot-scooter-blocker/pulls) are very welcome.** Please include the exact model and firmware, but never publish serial numbers or BLE addresses.
 
-**Important:** a scooter appearing in the Bluetooth scan does **not** prove that locking, authentication or telemetry works on it.
+**Important:** a scooter appearing in the Bluetooth scan does **not** prove that locking, authentication or telemetry works on it. [See the detailed compatibility and community testing guide](docs/COMPATIBILITY.md).
 
 ## Get started
 
@@ -64,7 +64,7 @@ I'd love to improve compatibility with other Ninebot / Segway models if owners c
 4. Turn on **Auto connect** for faster reconnects.
 5. Enable **Persistent notification** for background connection and quick access to the lock action. Android 13+ also needs notification permission.
 
-> This project is distributed as a GitHub APK, not through Google Play. Download from this repository's official Releases page rather than an unknown APK mirror.
+> This project is distributed as a GitHub APK, not through Google Play. Download from this repository's official Releases page rather than an unknown APK mirror. **New to APK installation?** Follow the [step-by-step setup and troubleshooting guide](docs/INSTALL.md).
 
 ## A little extra protection — not an anti-theft system
 
@@ -188,7 +188,7 @@ The app does not need an account or cloud service. Android 12+ uses Bluetooth pe
 
 ## Technical details and development
 
-For protocol behavior, reconnect strategy, architecture, telemetry registers, database migration and build instructions, read the [technical reference](docs/TECHNICAL.md). See [ride statistics details](docs/STATISTICS.md), [contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md).
+For protocol behavior, reconnect strategy, architecture, telemetry registers, database migration and build instructions, read the [technical reference](docs/TECHNICAL.md). See the [installation help](docs/INSTALL.md), [compatibility & testing guide](docs/COMPATIBILITY.md), [ride statistics details](docs/STATISTICS.md), [contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md).
 
 **Build:** JDK 17 · Android SDK 35 · Gradle 8.9.
 
