@@ -14,6 +14,11 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/assets/ble-workflow.gif" alt="Illustrated BLE workflow: pair with scooter, view connection and ride status, apply software lock" width="800" />
+</p>
+<p align="center"><sub>Illustrated feature walkthrough, not a recording of the Android interface. Supported behavior depends on scooter firmware. A software lock does not replace a physical lock.</sub></p>
+
 ---
 
 ## Why I built this
