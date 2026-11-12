@@ -3,6 +3,12 @@ name: Android APK
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -62,6 +68,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"

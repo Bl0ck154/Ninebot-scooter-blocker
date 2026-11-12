@@ -23,6 +23,13 @@ Built by a **Ninebot Max G30 owner** for riders who want a quick software lock, 
 
 </div>
 
+<p align="center">
+  <img src="docs/assets/ble-workflow.gif" alt="Illustrated BLE workflow: pair with scooter, view connection and ride status, apply software lock" width="800" />
+</p>
+<p align="center"><sub>Illustrated feature walkthrough, not a recording of the Android interface. Supported behavior depends on scooter firmware. A software lock does not replace a physical lock.</sub></p>
+
+---
+
 ## Why I built it
 
 I wanted something simple for my own **Ninebot Max G30**: keep my phone connected, lock the scooter quickly, and see what's going on without opening a full app every time. That's how Ninebot Scooter Blocker started.
