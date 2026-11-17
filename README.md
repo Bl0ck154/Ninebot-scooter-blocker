@@ -2,7 +2,7 @@
 
 # 🛴 Ninebot Scooter Blocker
 
-### Lightweight Android companion for Ninebot / Segway scooters
+### Android companion for Ninebot Max G30 — quick lock, persistent BLE, ride tracking
 
 **Fast BLE reconnect · Live telemetry · Ride sessions · Activity calendar · One-tap lock · Persistent notification · Full-charge alert**
 
@@ -10,9 +10,11 @@
 [![Release](https://img.shields.io/github/v/release/Bl0ck154/Ninebot-scooter-blocker?label=release)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
 [![Build](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml/badge.svg)](https://github.com/Bl0ck154/Ninebot-scooter-blocker/actions/workflows/android.yml)
 
-[**⬇️ Download latest APK**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest)
+[**⬇️ Download latest APK**](https://github.com/Bl0ck154/Ninebot-scooter-blocker/releases/latest) · [Quick start](#quick-start) · [Tested compatibility](#compatibility) · [Technical details](#architecture)
 
 </div>
+
+**Built for everyday Ninebot Max G30 use.** Keep your own phone connected in the background, lock or unlock quickly, check live battery/speed, and review rides and charge alerts — without firmware flashing or scooter tuning. **The G30 is hardware-tested; other Ninebot/Segway models are experimental.** [See compatibility](#compatibility).
 
 <p align="center">
   <img src="docs/assets/ble-workflow.gif" alt="Illustrated BLE workflow: pair with scooter, view connection and ride status, apply software lock" width="800" />
